@@ -156,6 +156,22 @@ async function checkScaffoldSmoke() {
     if (scenario.style !== "sales-demo") {
       fail(`Scaffold style should be "sales-demo" for audience=customer, got "${scenario.style}"`)
     }
+    // 默认骨架不能再只有 goto+caption+screenshot 三步——历史上这会产出 8s 的 demo，
+    // 看起来像 skill 拼接出问题。现在必须至少包含一次 scroll，并保证不少于 6 步。
+    for (const flow of scenario.flows || []) {
+      const stepTypes = (flow.steps || []).map((step) => step.type)
+      if (stepTypes.length < 6) {
+        fail(
+          `Scaffold flow "${flow.id}" steps too thin (${stepTypes.length}); raw recording would be ~8s. Skeleton must include scroll + multi-caption to give users a 25s+ starting point.`
+        )
+      }
+      if (!stepTypes.includes("scroll")) {
+        fail(`Scaffold flow "${flow.id}" skeleton should include at least one scroll step`)
+      }
+      if (stepTypes.filter((type) => type === "caption").length < 2) {
+        fail(`Scaffold flow "${flow.id}" skeleton should include multiple caption steps for narration cadence`)
+      }
+    }
 
     run("node", [
       "scripts/scaffold-repo-demo.mjs",

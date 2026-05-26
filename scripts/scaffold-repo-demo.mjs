@@ -636,6 +636,12 @@ function buildScenario(args, detection = null) {
     // 一个 browser context），如果让 mobile flow 写 surface=mobile 但实际在 desktop viewport 录制，
     // 会让用户错以为 runner 在录制中途切到手机端，反而埋下混合 surface 的坑。所以全部跟 primarySurface 走；
     // 真正想录 mobile，应该跑 `--surface mobile`（或 multi 再单独跑一遍）。
+    // 默认 steps 给出一个"骨干模板"：goto → caption → scroll → caption → wait → caption → screenshot。
+    // 历史上这里只 emit 3 步 (goto + caption + screenshot)，导致 raw 录屏只有 ~8 秒，跑完整流程后
+    // 视频里大半时间都是 TTS freeze padding 在播放冻结帧，画面像卡住了一样。
+    // 现在默认有 ~25-35 秒画面（多段滚动 + 多段字幕），让用户即使没填 click/fill 也能录到一段像样的
+    // landing 浏览演示。需要更深入的操作（click selector / fill input / waitForApi / db assert），
+    // 用户按 RECORDING_GUIDE.md 中的「step 模板」继续加即可。
     flows: args.flows.map((flow) => ({
       id: flow,
       surface: primarySurface,
@@ -649,6 +655,7 @@ function buildScenario(args, detection = null) {
       },
       steps: [
         { type: "goto", url: "/" },
+        { type: "wait", durationMs: 1200 },
         {
           type: "caption",
           title: flowLabels[flow] || flow,
@@ -656,6 +663,21 @@ function buildScenario(args, detection = null) {
           body: "",
           durationMs: 3000
         },
+        { type: "scroll", y: 800, durationMs: 1000 },
+        {
+          type: "caption",
+          title: flowLabels[flow] || flow,
+          body: "",
+          durationMs: 3000
+        },
+        { type: "scroll", y: 800, durationMs: 1000 },
+        {
+          type: "caption",
+          title: flowLabels[flow] || flow,
+          body: "",
+          durationMs: 3000
+        },
+        { type: "scroll", y: -1600, durationMs: 1200 },
         {
           type: "screenshot",
           name: `${flow}-checkpoint`
@@ -728,12 +750,46 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
 ## 录制前
 
 1. **必做：替换默认占位文案**。scaffold 生成的 \`scenario.flows[].caption.title\` 是流程标签（如"核心浏览路径"），\`body\` 字段是空字符串。直接录制会让字幕/TTS 只显示/朗读 title，缺少业务价值描述。请把每一条 caption（包括 \`flow.caption\` 与 \`steps[].caption\`）的 \`body\` 改写成"这一页能解决什么业务问题"的短句，再录制。
-2. 确认本地服务依赖可用。如果项目依赖 PostgreSQL/Redis/外部服务（如 Tauri devUrl、worker 进程），请额外手动启动；\`scenario.server.command\` 只会启动单一 dev server。
-3. 如果场景会写入数据库：${backupHint}
-4. 补齐场景 JSON 里的 route、selector、\`step.waitForApi\`（API 断言）和 \`flow.assertions[].type=="db"\`（DB 落库断言，需配套写一个 \`async (params) => boolean\` 的 module）。
-5. 避免真实客户数据、真实密码、token、邮箱验证码入镜；登录优先使用 dev-login + \`auth.storageState\` 或专用演示租户。
-6. 如果目标观众是客户，字幕和旁白先讲客户价值，再讲可控机制；不要把 mock、fixture、临时脚本、dev warning 等内部词放进画面。
-7. 如果项目同时有桌面端和手机版，手机版单独录制竖屏版本；不要把桌面横屏视频直接裁成手机视频。
+2. **必做：扩 \`flow.steps\` 加真实业务操作**。scaffold 默认 steps 只有 \`goto\` → 三段 \`scroll\` → \`screenshot\` 这一组首页浏览骨架；raw 录屏只有 ~25 秒。要演示点击、填表、跳页面、API 写入等具体能力，请在骨架基础上加 \`click\` / \`fill\` / \`select\` / \`wait\` / \`waitForApi\` / \`db\` 等 step（模板见下方"常见 step 模板"）。
+3. 确认本地服务依赖可用。如果项目依赖 PostgreSQL/Redis/外部服务（如 Tauri devUrl、worker 进程），请额外手动启动；\`scenario.server.command\` 只会启动单一 dev server。
+4. 如果场景会写入数据库：${backupHint}
+5. 补齐场景 JSON 里的 route、selector、\`step.waitForApi\`（API 断言）和 \`flow.assertions[].type=="db"\`（DB 落库断言，需配套写一个 \`async (params) => boolean\` 的 module）。
+6. 避免真实客户数据、真实密码、token、邮箱验证码入镜；登录优先使用 dev-login + \`auth.storageState\` 或专用演示租户。
+7. 如果目标观众是客户，字幕和旁白先讲客户价值，再讲可控机制；不要把 mock、fixture、临时脚本、dev warning 等内部词放进画面。
+8. 如果项目同时有桌面端和手机版，手机版单独录制竖屏版本；不要把桌面横屏视频直接裁成手机视频。
+
+## 视频太短自检
+
+如果最终视频明显比预期短（例如只有 10-20 秒），先排查 scenario 而不是 TTS/封面：
+
+1. \`ffprobe -v error -show_entries format=duration <flow>.mp4\` 看 **raw 录屏** 时长。raw 短就是 scenario 步骤不够，**不是** TTS / 封面 / 嵌入的问题。
+2. \`<flow>-narrated.mp4\` 时长 ≈ raw 时长 + \`<flow>-narrated-narration-report.json\` 里 \`timeline.totalPaddingMs\` + 封面 intro。如果 \`totalPaddingMs\` 占了视频一半，说明 caption 文案比展示窗口长很多，画面里看到的是冻结帧。要么缩短 caption.body，要么把 \`step.caption.durationMs\` / 上下 step 间隔拉长。
+3. \`<flow>-report.json\` 里 \`steps[]\` 数量应当等于 \`scenario.flows[].steps\` 数量；如果 runner 中途有 step 抛错，后面的 step 不会执行，视频随之变短。
+
+## 常见 step 模板
+
+骨架默认包含 \`goto/wait/caption/scroll/screenshot\`。下面是其余 step 类型的最小可用片段，按需复制到 \`flow.steps\` 里：
+
+\`\`\`json
+{ "type": "click",  "selector": "a.nav-cta", "highlightMs": 600 }
+{ "type": "click",  "selector": "button[type=submit]",
+  "waitForApi": { "method": "POST", "path": "/api/sources", "ok": true },
+  "waitForUrl": "/sources" }
+{ "type": "fill",   "selector": "#sourceName", "value": "演示·政务云招标监控" }
+{ "type": "select", "selector": "#region", "optionLabel": "华东" }
+{ "type": "wait",   "selector": ".job-list li", "state": "visible", "timeoutMs": 15000 }
+{ "type": "wait",   "url": "/login", "timeoutMs": 15000 }
+{ "type": "assert", "text": "演示·政务云招标监控", "timeoutMs": 10000 }
+{ "type": "db",
+  "module": "scripts/recordings/assert-source.mjs",
+  "exportName": "default",
+  "params": { "sourceName": "演示·政务云招标监控" } }
+\`\`\`
+
+- \`waitForApi\` 命中后会自动追加到 \`report.apiAssertions[]\`，配合 \`qualityGates.requireApiSuccess\` 校验成功率。
+- \`type=db\` 由你提供一个 \`async (params) => boolean | { ok, detail }\` 的模块，结果写入 \`report.dbAssertions[]\`。
+- \`scroll\` 用 \`page.mouse.wheel(x, y)\`，\`y\` 为正表示向下滚；\`durationMs\` 是滚完后的停留。
+- \`waitForUrl\` 接受正则字符串，匹配 \`page.url()\`。
 
 ## 录制
 
@@ -844,12 +900,46 @@ function buildGuideEn(args, scenario, scenarioPath, scriptPath, ctx) {
 ## Before Recording
 
 1. **Required: replace the placeholder caption text.** The scaffold leaves \`scenario.flows[].caption.body\` (and \`steps[].caption.body\`) empty. Captions will then show only the title and TTS will only narrate the title. Edit every caption \`body\` into a short business-value sentence before recording.
-2. Make sure local dependencies are running. If the project needs PostgreSQL/Redis/workers/Tauri devUrl, start them manually; \`scenario.server.command\` only launches a single dev server.
-3. If the flow writes to the database: ${backupHint}
-4. Fill in real routes, selectors, \`step.waitForApi\` (API assertions), and \`flow.assertions[].type=="db"\` (DB assertions; supply an \`async (params) => boolean\` module).
-5. Never record real customer data, real passwords, tokens or 2FA codes. Prefer dev-login + \`auth.storageState\` or a dedicated demo tenant.
-6. For customer audiences keep captions/narration value-first; do not write \`mock\`, \`fixture\`, \`renderer-only\`, internal boundary names or dev warnings into the on-screen text.
-7. Record desktop and mobile separately when the product ships on both surfaces; do not crop a desktop recording into a mobile portrait video.
+2. **Required: extend \`flow.steps\` with real product actions.** The default steps are just \`goto\` → three \`scroll\` blocks → \`screenshot\` (a landing-only browse, ~25s raw). Add \`click\` / \`fill\` / \`select\` / \`wait\` / \`waitForApi\` / \`db\` to demonstrate clicks, form submission, navigation, and writes — see "Common step templates" below.
+3. Make sure local dependencies are running. If the project needs PostgreSQL/Redis/workers/Tauri devUrl, start them manually; \`scenario.server.command\` only launches a single dev server.
+4. If the flow writes to the database: ${backupHint}
+5. Fill in real routes, selectors, \`step.waitForApi\` (API assertions), and \`flow.assertions[].type=="db"\` (DB assertions; supply an \`async (params) => boolean\` module).
+6. Never record real customer data, real passwords, tokens or 2FA codes. Prefer dev-login + \`auth.storageState\` or a dedicated demo tenant.
+7. For customer audiences keep captions/narration value-first; do not write \`mock\`, \`fixture\`, \`renderer-only\`, internal boundary names or dev warnings into the on-screen text.
+8. Record desktop and mobile separately when the product ships on both surfaces; do not crop a desktop recording into a mobile portrait video.
+
+## Why is my video so short?
+
+If the final video is much shorter than expected (e.g. only 10-20s), inspect the scenario first, not the TTS / cover pipeline:
+
+1. \`ffprobe -v error -show_entries format=duration <flow>.mp4\` shows the **raw recording** duration. If raw is short, the scenario lacks steps — not a TTS / cover / embed bug.
+2. \`<flow>-narrated.mp4\` duration ≈ raw duration + \`timeline.totalPaddingMs\` (from \`<flow>-narrated-narration-report.json\`) + cover intro. If \`totalPaddingMs\` accounts for half the video, your caption text is longer than the display window and you're watching freeze frames — shorten \`caption.body\` or widen the gap between steps.
+3. \`<flow>-report.json\` \`steps[]\` count should equal the scenario steps. If the runner threw mid-flow, subsequent steps never ran and the video gets cut short.
+
+## Common step templates
+
+The default skeleton covers \`goto/wait/caption/scroll/screenshot\`. Drop these into \`flow.steps\` as needed:
+
+\`\`\`json
+{ "type": "click",  "selector": "a.nav-cta", "highlightMs": 600 }
+{ "type": "click",  "selector": "button[type=submit]",
+  "waitForApi": { "method": "POST", "path": "/api/sources", "ok": true },
+  "waitForUrl": "/sources" }
+{ "type": "fill",   "selector": "#sourceName", "value": "Demo: GovCloud Tender Monitor" }
+{ "type": "select", "selector": "#region", "optionLabel": "East" }
+{ "type": "wait",   "selector": ".job-list li", "state": "visible", "timeoutMs": 15000 }
+{ "type": "wait",   "url": "/login", "timeoutMs": 15000 }
+{ "type": "assert", "text": "Demo: GovCloud Tender Monitor", "timeoutMs": 10000 }
+{ "type": "db",
+  "module": "scripts/recordings/assert-source.mjs",
+  "exportName": "default",
+  "params": { "sourceName": "Demo: GovCloud Tender Monitor" } }
+\`\`\`
+
+- \`waitForApi\` hits are appended to \`report.apiAssertions[]\` for \`qualityGates.requireApiSuccess\`.
+- \`type=db\` calls a user module that returns \`boolean | { ok, detail }\`; results land in \`report.dbAssertions[]\`.
+- \`scroll\` uses \`page.mouse.wheel(x, y)\` — positive \`y\` scrolls down; \`durationMs\` is the pause after the scroll.
+- \`waitForUrl\` is a regex string matched against \`page.url()\`.
 
 ## Record
 
