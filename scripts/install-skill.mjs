@@ -9,21 +9,34 @@ import os from "node:os"
 const __filename = fileURLToPath(import.meta.url)
 const repoRoot = path.resolve(path.dirname(__filename), "..")
 
+function defaultDest(target) {
+  const home = os.homedir()
+  if (target === "claude") {
+    return path.join(home, ".claude", "skills", "repo-demo-recorder")
+  }
+  // codex（默认）
+  return process.env.CODEX_HOME
+    ? path.join(process.env.CODEX_HOME, "skills", "repo-demo-recorder")
+    : path.join(home, ".codex", "skills", "repo-demo-recorder")
+}
+
 function parseArgs(argv) {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(`Usage: node scripts/install-skill.mjs [options]
 
 Options:
-  --dest <dir>   Install destination (default: $CODEX_HOME/skills/repo-demo-recorder or ~/.codex/skills/repo-demo-recorder)
-  --force        Overwrite existing destination
-  --dry-run      Print files that would be copied
+  --dest <dir>     Install destination (overrides --target)
+  --target <name>  codex (default) | claude — pick a known skill home
+                   codex:   $CODEX_HOME/skills/repo-demo-recorder or ~/.codex/skills/repo-demo-recorder
+                   claude:  ~/.claude/skills/repo-demo-recorder (Claude Code user-level skill)
+  --force          Overwrite existing destination
+  --dry-run        Print files that would be copied
 `)
     process.exit(0)
   }
   const args = {
-    dest: process.env.CODEX_HOME
-      ? path.join(process.env.CODEX_HOME, "skills", "repo-demo-recorder")
-      : path.join(os.homedir(), ".codex", "skills", "repo-demo-recorder"),
+    target: "codex",
+    dest: null,
     force: false,
     dryRun: false
   }
@@ -42,10 +55,18 @@ Options:
     const value = argv[index + 1]
     if (!value || value.startsWith("--")) throw new Error(`Missing value for ${token}`)
     if (token === "--dest") args.dest = value
-    else throw new Error(`Unknown argument: ${token}`)
+    else if (token === "--target") {
+      if (!["codex", "claude"].includes(value)) {
+        throw new Error(`--target must be one of: codex, claude (received: ${value})`)
+      }
+      args.target = value
+    } else throw new Error(`Unknown argument: ${token}`)
     index += 1
   }
 
+  if (!args.dest) {
+    args.dest = defaultDest(args.target)
+  }
   return args
 }
 
@@ -74,8 +95,16 @@ if (existsSync(destRoot)) {
 
 if (!args.dryRun) await mkdir(destRoot, { recursive: true })
 
-for (const item of ["SKILL.md", "agents", "assets", "references", "scripts"]) {
+// 复制 skill 运行时需要的全部资源。
+// - SKILL.md / references / scripts：skill 的核心
+// - agents/openai.yaml：Codex 的可选 manifest（Claude Code 会忽略，无副作用）
+// - scripts/templates：scaffold-repo-demo.mjs 运行时会读取这里的 playwright runner template
+for (const item of ["SKILL.md", "agents", "references", "scripts"]) {
   await copyRuntimeFile(item, destRoot, args.dryRun)
 }
 
-console.log(`Installed repo-demo-recorder skill to ${destRoot}`)
+if (args.dryRun) {
+  console.log(`[dry-run] Would install repo-demo-recorder skill to ${destRoot}`)
+} else {
+  console.log(`Installed repo-demo-recorder skill to ${destRoot}`)
+}

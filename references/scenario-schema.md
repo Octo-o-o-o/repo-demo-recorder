@@ -252,15 +252,44 @@
 
 ## Step 类型
 
-- `goto`：导航。
+- `goto`：导航。可加 `step.waitUntil`（默认 `domcontentloaded`，不推荐 `networkidle`，Next.js/Tauri 等 HMR 项目可能永远不 idle）。
 - `caption`：只显示字幕并停留。
-- `click`：高亮、清除高亮、点击。
+- `chapter`：模块切换横幅。
+- `click`：高亮、清除高亮、点击。可加 `waitForApi: { method, path, ok, timeoutMs }`，命中后自动追加到 `report.apiAssertions[]`，配合 `qualityGates.requireApiSuccess` 校验。
 - `fill`：高亮、清除高亮、输入。
 - `select`：Radix/native select。
 - `scroll`：滚动。
 - `wait`：等待固定时间或 selector/API/URL。
 - `screenshot`：关键帧截图。
-- `assert`：运行页面或数据断言。
+- `assert`：运行页面文本断言。
+- `db`：执行 DB 落库断言（详见下方）。
+
+## Step `waitForApi`
+
+`{ method, path, ok, timeoutMs }`。runner 自动 `await page.waitForResponse(...)`，命中后追加到 `report.apiAssertions[]`：
+
+```json
+{ "label": "create-source-5-click", "method": "POST", "path": "/api/sources", "url": "...", "status": 201, "ok": true, "atMs": 12345 }
+```
+
+`qualityGates.requireApiSuccess=true` 时，validate 检查 `report.apiAssertions[].ok=true` 至少有一条。
+
+## Step / Assertion `type: "db"`
+
+runner 不会自动连数据库。你在 scenario 里指向项目内一个 `async (params) => boolean | { ok, detail }` 函数：
+
+```json
+{
+  "type": "db",
+  "module": "scripts/recordings/assert-source.mjs",
+  "exportName": "default",
+  "params": { "sourceName": "演示·政务云招标监控" }
+}
+```
+
+`module` 是相对于 `projectRoot` 的相对路径；`exportName` 省略时取 `default`。函数可以用 Prisma、Drizzle、Knex、原生 `pg` 等任意客户端。结果会追加到 `report.dbAssertions[]`；`qualityGates.requireDbAssertions=true` 时检查至少一条 `ok=true`。
+
+scaffold 默认把 `requireDbAssertions=false`，因为多数项目首次跑时还没写过 DB assert module；只有你在 step 里加了 `type: "db"` 节点并希望 fail-fast，再手动改成 true。
 
 ## Narration 字段
 

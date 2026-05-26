@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 
 const PRESETS = {
   "customer-desktop": {
@@ -175,31 +175,90 @@ function mp4Filter(args) {
     .join(",")
 }
 
+function ffprobeJson(filePath) {
+  const result = spawnSync(
+    "ffprobe",
+    ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", filePath],
+    { encoding: "utf8" }
+  )
+  if (result.status !== 0) {
+    throw new Error(result.stderr || `ffprobe failed: ${filePath}`)
+  }
+  return JSON.parse(result.stdout)
+}
+
+function isAttachedPic(stream) {
+  return Number(stream?.disposition?.attached_pic || 0) === 1
+}
+
 async function polishMp4(args) {
-  await mkdir(path.dirname(path.resolve(args.out)), { recursive: true })
-  const ffmpegArgs = [
-    "-y",
-    "-i",
-    path.resolve(args.video),
-    "-vf",
-    mp4Filter(args),
-    "-c:v",
+  const inputPath = path.resolve(args.video)
+  const outputPath = path.resolve(args.out)
+  await mkdir(path.dirname(outputPath), { recursive: true })
+
+  // 探测源视频是否有 attached_pic 封面流，polish 时需要原样保留，否则会丢封面
+  let probe = null
+  try {
+    probe = ffprobeJson(inputPath)
+  } catch {
+    probe = null
+  }
+  const coverStream = probe?.streams?.find((stream) => stream.codec_type === "video" && isAttachedPic(stream)) || null
+  const hasAudio = Boolean(probe?.streams?.some((stream) => stream.codec_type === "audio"))
+
+  const ffmpegArgs = ["-y", "-i", inputPath]
+  ffmpegArgs.push(
+    "-filter_complex",
+    `[0:v:0]${mp4Filter(args)}[outv]`,
+    "-map",
+    "[outv]"
+  )
+  if (hasAudio) ffmpegArgs.push("-map", "0:a:0?")
+  if (coverStream) {
+    ffmpegArgs.push("-map", `0:${coverStream.index}`)
+  }
+  ffmpegArgs.push(
+    "-c:v:0",
     "libx264",
     "-crf",
     String(args.crf),
     "-preset",
     args.presetName,
     "-pix_fmt",
-    "yuv420p",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "160k",
-    "-movflags",
-    "+faststart",
-    path.resolve(args.out)
-  ]
+    "yuv420p"
+  )
+  if (hasAudio) ffmpegArgs.push("-c:a", "aac", "-b:a", "160k")
+  if (coverStream) {
+    // ffmpeg `-c:v:N` 中 N 指的是输出 video stream 的序号（不算 audio）。
+    // 输出顺序：主 video → 可选 audio → cover（attached_pic）。
+    // 所以 cover 总是输出中的第 2 个 video stream，索引固定为 1。
+    const coverVideoIndex = 1
+    ffmpegArgs.push(
+      `-c:v:${coverVideoIndex}`,
+      "copy",
+      `-disposition:v:${coverVideoIndex}`,
+      "attached_pic",
+      `-metadata:s:v:${coverVideoIndex}`,
+      `title=${coverStream.tags?.title || "Cover"}`,
+      `-metadata:s:v:${coverVideoIndex}`,
+      `comment=${coverStream.tags?.comment || "Cover (front)"}`
+    )
+  }
+  ffmpegArgs.push("-movflags", "+faststart", outputPath)
   await run("ffmpeg", ffmpegArgs)
+
+  // 验证 polish 后封面流是否被正确保留
+  if (coverStream) {
+    const outputProbe = ffprobeJson(outputPath)
+    const outputCover = outputProbe.streams?.find(
+      (stream) => stream.codec_type === "video" && isAttachedPic(stream)
+    )
+    if (!outputCover) {
+      throw new Error(
+        "polish 后丢失了源视频的 attached_pic 封面流，请检查 ffmpeg 是否支持 png/mjpeg 流复制"
+      )
+    }
+  }
 }
 
 async function polishGif(args) {

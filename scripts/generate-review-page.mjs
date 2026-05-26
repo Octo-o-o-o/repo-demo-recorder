@@ -52,8 +52,17 @@ Options:
 }
 
 async function readJsonMaybe(filePath) {
-  if (!filePath || !existsSync(path.resolve(filePath))) return null
-  return JSON.parse(await readFile(path.resolve(filePath), "utf8"))
+  if (!filePath) return null
+  const resolved = path.resolve(filePath)
+  if (!existsSync(resolved)) return null
+  try {
+    const text = await readFile(resolved, "utf8")
+    if (!text.trim()) return null
+    return JSON.parse(text)
+  } catch (error) {
+    console.warn(`[review] Ignoring unreadable JSON ${filePath}: ${error.message}`)
+    return null
+  }
 }
 
 function htmlEscape(value) {

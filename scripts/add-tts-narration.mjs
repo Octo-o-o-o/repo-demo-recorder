@@ -266,9 +266,49 @@ function buildVtt(cues) {
     .join("\n\n")}\n`
 }
 
+// 解析 `say -v "?"` 输出的 voice 列表，让我们在用户配置的 voice 不存在时能 fallback。
+function listMacosVoices() {
+  const result = spawnSync("say", ["-v", "?"], { encoding: "utf8" })
+  if (result.status !== 0) return []
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => {
+      // 每行形如 "Tingting            zh_CN    # 你好！我叫婷婷。"
+      const match = line.match(/^([^\s]+(?:\s\([^)]+\))?)\s+([a-zA-Z_-]+)/)
+      if (!match) return null
+      return { name: match[1].trim(), locale: match[2].trim() }
+    })
+    .filter(Boolean)
+}
+
+function pickMacosVoiceFallback(language, voices) {
+  if (voices.length === 0) return null
+  const localeMap = { "zh-CN": "zh_CN", "zh-TW": "zh_TW", "en-US": "en_US" }
+  const targetLocale = localeMap[language] || "zh_CN"
+  const sameLocale = voices.find((voice) => voice.locale === targetLocale)
+  if (sameLocale) return sameLocale.name
+  return voices[0].name
+}
+
 async function synthesizeWithMacosSay(cues, args, tempDir) {
   if (!commandExists("say")) {
     throw new Error("当前系统没有 macOS say 命令，无法使用 local-system TTS")
+  }
+
+  const voices = listMacosVoices()
+  const hasVoice = voices.some((voice) => voice.name === args.voice)
+  if (!hasVoice && voices.length > 0) {
+    const fallback = pickMacosVoiceFallback(args.language, voices)
+    if (fallback) {
+      console.warn(
+        `[tts] macOS say 找不到 voice "${args.voice}"，自动 fallback 到 "${fallback}"。可用 voice 列表：${voices.slice(0, 8).map((voice) => voice.name).join(", ")}${voices.length > 8 ? " ..." : ""}`
+      )
+      args.voice = fallback
+    } else {
+      throw new Error(
+        `macOS say 找不到 voice "${args.voice}"，且无法挑选 fallback。请运行 "say -v ?" 查看可用 voice，再用 --voice 指定。`
+      )
+    }
   }
 
   const files = []
@@ -296,21 +336,45 @@ async function synthesizeWithEdgeTts(cues, args, tempDir) {
     const textPath = path.join(tempDir, `${stem}.txt`)
     const audioPath = path.join(tempDir, `${stem}.mp3`)
     await writeFile(textPath, cue.text)
-    await run("uvx", [
-      "edge-tts",
-      "--voice",
-      args.voice,
-      "--rate",
-      args.edgeRate,
-      "--volume",
-      args.edgeVolume,
-      "--pitch",
-      args.edgePitch,
-      "--file",
-      textPath,
-      "--write-media",
-      audioPath
-    ])
+    // edge-tts 走 Microsoft Edge online TTS，网络偶发抖动很常见。
+    // 单段失败时做有限次重试，每次拉长间隔，避免长 demo 因为一次抖动整体失败。
+    const maxAttempts = 3
+    let lastError = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await run("uvx", [
+          "edge-tts",
+          "--voice",
+          args.voice,
+          "--rate",
+          args.edgeRate,
+          "--volume",
+          args.edgeVolume,
+          "--pitch",
+          args.edgePitch,
+          "--file",
+          textPath,
+          "--write-media",
+          audioPath
+        ])
+        lastError = null
+        break
+      } catch (error) {
+        lastError = error
+        if (attempt < maxAttempts) {
+          const waitMs = 800 * attempt
+          console.warn(
+            `[tts] edge-tts cue ${cue.index} 第 ${attempt} 次失败，${waitMs}ms 后重试：${error.message?.split("\n")[0] || error}`
+          )
+          await new Promise((resolve) => setTimeout(resolve, waitMs))
+        }
+      }
+    }
+    if (lastError) {
+      throw new Error(
+        `edge-tts cue ${cue.index} 在 ${maxAttempts} 次重试后仍然失败。请检查网络/uvx 是否可用，或改用 --engine macos-say。\n原始错误：${lastError.message || lastError}`
+      )
+    }
     files.push(audioPath)
   }
 

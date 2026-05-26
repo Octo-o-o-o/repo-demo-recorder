@@ -40,6 +40,13 @@ or, when `CODEX_HOME` is not set:
 ~/.codex/skills/repo-demo-recorder
 ```
 
+To install into the Claude Code user-level skills directory:
+
+```bash
+node scripts/install-skill.mjs --target claude --force
+# → ~/.claude/skills/repo-demo-recorder
+```
+
 To install somewhere else:
 
 ```bash
@@ -52,7 +59,24 @@ node scripts/install-skill.mjs --dest /path/to/skills/repo-demo-recorder --force
 - `ffmpeg` and `ffprobe`
 - Playwright available in the target repository when running generated recorder scripts
 - Optional for local narration: macOS `say`
-- Optional for higher-quality online narration: `uvx` with `edge-tts` (no API key; requires network)
+- Optional for higher-quality online narration: `uvx` with `edge-tts` (no API key; requires network). Failures are retried up to 3 times per cue with backoff.
+- Optional for `generate-video-cover.mjs`: Playwright (`npm i -D playwright`). When Playwright is missing, the cover falls back to an `ffmpeg drawtext` renderer so external-recording workflows (iOS / Android / Tauri / CLI projects without Playwright) still work. Set `REPO_DEMO_RECORDER_FONT_FILE` to a `.ttf/.otf` path for nicer text rendering in the fallback.
+
+## When To Use It
+
+This skill assumes the demo can be driven by Playwright against a local web server. Use the **scaffold + recorder** workflow when the project is a Web app, SaaS UI, or any project that already exposes a browser-reachable surface.
+
+For projects that **cannot** be driven by Playwright — iOS / macOS / Android / Flutter Desktop / Tauri / Electron-without-web-shell / pure CLI — record the raw video with an external tool (Xcode Simulator + QuickTime, Android Emulator + `adb screenrecord`, Screen Studio, OBS, asciinema, …) and then plug the result into the **external recording workflow** below. Cover generation, narration, gap trimming, attached-pic embedding, quality gates, and the review HTML all work standalone on any input MP4 — only the `scaffold-repo-demo.mjs` / `scripts/recordings/*.mjs` recorder layer requires a web server.
+
+### External recording workflow
+
+1. Record a raw MP4 with whatever tool fits the platform.
+2. Hand-write a minimal `report.json` next to the video (only `captions[]`, `steps`, `consoleMessages`, `pageErrors`, `responseErrors` are required; see `references/quality-gates.md` for the schema).
+3. `add-tts-narration.mjs` adds TTS (use `--engine edge-tts --voice zh-CN-YunyangNeural` for mobile portrait demos).
+4. `generate-video-cover.mjs --theme mobile --width 1080 --height 1920` (or desktop defaults) produces the cover + candidate contact sheet.
+5. `embed-video-cover.mjs --intro-duration-ms 2000` embeds the cover; `trim-video-gap.mjs` removes any blank intro tail.
+6. `validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` runs the media gate.
+7. `generate-review-page.mjs` writes a single HTML reviewers can open.
 
 ## Basic Usage
 

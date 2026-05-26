@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createRequire } from "node:module"
 
@@ -127,36 +128,62 @@ function inferText(report, args) {
     .map((cue) => cue.title)
     .slice(0, 3)
 
+  // 如果 report 自带 language=zh-* 或 captions 是中文，封面所有 fallback 文案也走中文，
+  // 避免英文 fallback 出现在中文项目封面里。
+  const reportLanguage = String(report?.language || "").toLowerCase()
+  const captionLooksChinese = meaningful.some((title) => /[一-龥]/.test(title || ""))
+  const isZh = reportLanguage.startsWith("zh") || captionLooksChinese
+
   const isPortrait = Number(args.height) > Number(args.width)
   return {
-    title: args.title || report?.title || "Product Demo",
+    title: args.title || report?.title || (isZh ? "产品演示" : "Product Demo"),
     subtitle:
       args.subtitle ||
-      (args.theme === "mobile" || isPortrait
-        ? "Mobile product walkthrough"
-        : args.theme === "customer"
-          ? "Customer-ready product walkthrough"
-          : "Verified product walkthrough"),
-    line: args.line || meaningful.join(" · ") || "Scripted recording · Captions · Quality report",
+      (isZh
+        ? args.theme === "mobile" || isPortrait
+          ? "移动端产品走查"
+          : args.theme === "customer"
+            ? "面向客户的可发版走查"
+            : "可验证的产品走查"
+        : args.theme === "mobile" || isPortrait
+          ? "Mobile product walkthrough"
+          : args.theme === "customer"
+            ? "Customer-ready product walkthrough"
+            : "Verified product walkthrough"),
+    line:
+      args.line ||
+      meaningful.join(" · ") ||
+      (isZh ? "脚本录制 · 字幕 · 质量报告" : "Scripted recording · Captions · Quality report"),
     badge:
       args.badge ||
-      (args.theme === "mobile" || isPortrait
-        ? "MOBILE DEMO"
-        : args.theme === "customer"
-          ? "CUSTOMER DEMO"
-          : args.theme === "training"
-            ? "TRAINING"
-            : "VERIFIED DEMO")
+      (isZh
+        ? args.theme === "mobile" || isPortrait
+          ? "移动端演示"
+          : args.theme === "customer"
+            ? "客户演示"
+            : args.theme === "training"
+              ? "培训 SOP"
+              : "已验证演示"
+        : args.theme === "mobile" || isPortrait
+          ? "MOBILE DEMO"
+          : args.theme === "customer"
+            ? "CUSTOMER DEMO"
+            : args.theme === "training"
+              ? "TRAINING"
+              : "VERIFIED DEMO")
   }
 }
 
 function pickAutoTime(report, durationSeconds) {
   const captions = Array.isArray(report?.captions) ? report.captions : []
+  // 这套关键词覆盖工作台 / 数据展示 / 聊天对话 / 报表分析 等大类应用的首屏。
+  // 过去只覆盖 dashboard/home 会让聊天类应用永远 fallback 到 22% 时间点。
+  const hotspotPattern = /home|首页|overview|工作台|dashboard|chat|对话|聊天|conversation|inbox|消息|主屏|主页|workspace|library|资料库|workspaces?|hub|console|主界面/i
   const preferred = captions.find(
     (cue) =>
       cue.kind !== "chapter" &&
       Number.isFinite(Number(cue.startMs)) &&
-      /home|首页|overview|工作台|dashboard/i.test(`${cue.title || ""} ${cue.body || ""}`)
+      hotspotPattern.test(`${cue.title || ""} ${cue.body || ""}`)
   )
   if (preferred) return Math.max(0, Number(preferred.startMs) / 1000 + 0.8)
   return Math.max(2, Math.min(durationSeconds * 0.22, durationSeconds - 1))
@@ -180,6 +207,13 @@ async function dataUrl(filePath) {
   return `data:image/png;base64,${bytes.toString("base64")}`
 }
 
+// 探测一下 text 主题是否是中文，用来决定模板里的 hardcode 行（footer/水印）是否走中文版本。
+// 之前模板里写死了英文 "Customer-ready product walkthrough"，让中文项目的封面右下角永远是英文水印。
+function isChineseText(text) {
+  const sample = [text?.title, text?.subtitle, text?.line, text?.badge].filter(Boolean).join("")
+  return /[一-龥]/.test(sample)
+}
+
 function coverHtml({ src, text, width, height }) {
   if (height > width) return portraitCoverHtml({ src, text, width, height })
   const title = escapeHtml(text.title)
@@ -188,6 +222,7 @@ function coverHtml({ src, text, width, height }) {
   const badge = escapeHtml(text.badge)
   const headlineSize = width >= 1600 ? 92 : 72
   const subtitleSize = width >= 1600 ? 44 : 35
+  const footer = escapeHtml(isChineseText(text) ? "可发版的产品走查" : "Customer-ready product walkthrough")
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}
@@ -211,7 +246,7 @@ h2{margin:${Math.round(height * 0.039)}px 0 0;font-size:${subtitleSize}px;line-h
 <div class="bg"></div><div class="shade"></div><div class="border"></div>
 <section class="copy"><div class="badge">${badge}</div><h1>${title}</h1><h2>${subtitle}</h2><div class="line">${line}</div><div class="accent"></div></section>
 <div class="screenWrap"><div class="screenBar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><img class="screen" src="${src}" /></div>
-<div class="footer">Customer-ready product walkthrough</div>
+<div class="footer">${footer}</div>
 </div></body></html>`
 }
 
@@ -220,6 +255,7 @@ function portraitCoverHtml({ src, text, width, height }) {
   const subtitle = escapeHtml(text.subtitle)
   const line = escapeHtml(text.line)
   const badge = escapeHtml(text.badge)
+  const footer = escapeHtml(isChineseText(text) ? "竖屏产品走查" : "Portrait-ready product walkthrough")
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}
@@ -243,7 +279,7 @@ h2{margin:34px 0 0;font-size:42px;line-height:1.24;letter-spacing:0;font-weight:
 <div class="bg"></div><div class="shade"></div><div class="border"></div>
 <section class="copy"><div class="badge">${badge}</div><h1>${title}</h1><h2>${subtitle}</h2><div class="line">${line}</div><div class="accent"></div></section>
 <div class="phoneWrap"><div class="phoneTop"><span class="speaker"></span></div><img class="screen" src="${src}" /></div>
-<div class="footer">Portrait-ready product walkthrough</div>
+<div class="footer">${footer}</div>
 </div></body></html>`
 }
 
@@ -270,9 +306,125 @@ async function loadChromium() {
       const requireFromCwd = createRequire(path.join(process.cwd(), "package.json"))
       return requireFromCwd("playwright").chromium
     } catch {
-      throw new Error(
-        "Cannot load Playwright. Install it in the target repository (for example: npm i -D playwright) or run this script from a repo that already has Playwright."
-      )
+      return null
+    }
+  }
+}
+
+// 检测系统 ffmpeg 是否真的编译了 drawtext（需要 libfreetype）。
+// Homebrew 默认 build 早期不带 freetype；brew tap 的多数 ffmpeg 8.x 也不一定带。
+// 我们要在 fallback 之前知道这一点，避免给用户一个"看起来失败"的封面命令。
+function ffmpegHasDrawtext() {
+  const result = spawnSync("ffmpeg", ["-hide_banner", "-filters"], { encoding: "utf8" })
+  if (result.status !== 0) return false
+  return /(^|\s)drawtext\s/m.test(result.stdout || "")
+}
+
+// 纯抽帧 fallback：当系统 ffmpeg 不支持 drawtext 时，至少把抽帧导出为封面，
+// 让后续 embed-video-cover 仍然有 PNG 可嵌。文字层留给用户在外部工具里加，或安装 playwright 后重跑。
+async function renderCoverFrameOnly(framePath, outPath, args) {
+  const portrait = Number(args.height) > Number(args.width)
+  const width = Number(args.width)
+  const height = Number(args.height)
+  // 保留长宽比，居中裁剪到目标尺寸；不渲染任何文字层。
+  const filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=${portrait ? "increase" : "decrease"},crop=${width}:${height},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x101612[out]`
+  await run("ffmpeg", [
+    "-y",
+    "-loop",
+    "1",
+    "-i",
+    framePath,
+    "-filter_complex",
+    filter,
+    "-map",
+    "[out]",
+    "-frames:v",
+    "1",
+    outPath
+  ])
+}
+
+// 当 chromium 不可用（典型场景：纯外部录屏工作流，比如 iOS 原生项目根本不装 playwright）时，
+// 我们退化到只用 ffmpeg drawtext + overlay 生成一个朴素但可用的封面。
+// 不依赖任何 Node 渲染库，只要系统的 ffmpeg 带 drawtext (libfreetype) 即可。
+async function renderCoverWithFfmpeg(framePath, outPath, text, args) {
+  const portrait = Number(args.height) > Number(args.width)
+  const width = Number(args.width)
+  const height = Number(args.height)
+  // ffmpeg drawtext 在 `text='...'` 内部把 `\` 当转义符；要写一个字面 `\` 必须 `\\`，
+  // 字面 `'` 用 `\'`，字面 `:` 用 `\:`、字面 `%` 用 `\%`。
+  // 注意 JS 字符串中要写两个反斜杠才是一个真实反斜杠。
+  // 之前这里多了几层反斜杠（4个/3个反斜杠），导致 drawtext 把内容解析得乱七八糟。
+  const escapeForDrawtext = (value) =>
+    String(value ?? "")
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/:/g, "\\:")
+      .replace(/%/g, "\\%")
+  const titleFontSize = portrait ? Math.round(height * 0.05) : Math.round(width * 0.046)
+  const subtitleFontSize = portrait ? Math.round(height * 0.023) : Math.round(width * 0.022)
+  const lineFontSize = portrait ? Math.round(height * 0.018) : Math.round(width * 0.016)
+  const badgeFontSize = portrait ? Math.round(height * 0.017) : Math.round(width * 0.015)
+  const titleY = portrait ? Math.round(height * 0.12) : Math.round(height * 0.18)
+  const subtitleY = portrait ? Math.round(height * 0.22) : Math.round(height * 0.30)
+  const lineY = portrait ? Math.round(height * 0.30) : Math.round(height * 0.40)
+  const badgeY = portrait ? Math.round(height * 0.07) : Math.round(height * 0.12)
+  const fontFile = process.env.REPO_DEMO_RECORDER_FONT_FILE || ""
+  const fontArg = fontFile ? `fontfile='${fontFile.replace(/'/g, "\\'")}':` : ""
+  const drawTexts = [
+    `drawbox=x=0:y=0:w=iw:h=ih:color=black@0.62:t=fill`,
+    `${fontArg}drawtext=text='${escapeForDrawtext(text.badge)}':fontcolor=white@0.9:fontsize=${badgeFontSize}:x=(w*0.06):y=${badgeY}:box=1:boxcolor=0x3e7e56@0.85:boxborderw=12`,
+    `${fontArg}drawtext=text='${escapeForDrawtext(text.title)}':fontcolor=white:fontsize=${titleFontSize}:x=(w*0.06):y=${titleY}`,
+    `${fontArg}drawtext=text='${escapeForDrawtext(text.subtitle)}':fontcolor=white@0.92:fontsize=${subtitleFontSize}:x=(w*0.06):y=${subtitleY}`,
+    `${fontArg}drawtext=text='${escapeForDrawtext(text.line)}':fontcolor=white@0.82:fontsize=${lineFontSize}:x=(w*0.06):y=${lineY}`
+  ]
+  const filter = [
+    `[1:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=22,eq=brightness=-0.18:saturation=0.85[bg]`,
+    `[1:v]scale=${portrait ? Math.round(width * 0.72) : Math.round(width * 0.5)}:-1[fg]`,
+    `[bg][fg]overlay=${portrait ? "(W-w)/2:(H-h)/2+80" : "W-w-W*0.06:(H-h)/2"}[ovly]`,
+    `[ovly]${drawTexts.join(",")}[out]`
+  ].join(";")
+  await run("ffmpeg", [
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    `color=c=0x101612:s=${width}x${height}`,
+    "-loop",
+    "1",
+    "-i",
+    framePath,
+    "-filter_complex",
+    filter,
+    "-map",
+    "[out]",
+    "-frames:v",
+    "1",
+    outPath
+  ])
+}
+
+// candidates 目录可能被重复写入；只清理本工具自己生成的文件，避免误删用户已有内容
+const CANDIDATE_MARKER = "cover-candidates.json"
+const CANDIDATE_FILE_PATTERN = /^(candidate-\d+-(?:frame|cover)\.png|contact-sheet\.png|cover-candidates\.json)$/
+
+async function prepareCandidatesDir(candidatesDir) {
+  if (!existsSync(candidatesDir)) return
+  const entries = await readdir(candidatesDir, { withFileTypes: true })
+  if (entries.length === 0) return
+  const hasMarker = entries.some((entry) => entry.isFile() && entry.name === CANDIDATE_MARKER)
+  const unexpected = entries.filter(
+    (entry) => !(entry.isFile() && CANDIDATE_FILE_PATTERN.test(entry.name))
+  )
+  if (!hasMarker && unexpected.length > 0) {
+    throw new Error(
+      `候选封面目录已存在且包含非本工具生成的内容，拒绝写入以免覆盖：${candidatesDir}\n` +
+        `请改用一个新的 --candidates-dir，或手动清空该目录后再重试。`
+    )
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && CANDIDATE_FILE_PATTERN.test(entry.name)) {
+      await rm(path.join(candidatesDir, entry.name), { force: true })
     }
   }
 }
@@ -315,19 +467,115 @@ const text = inferText(report, args)
 const selectedTime = parseTimestamp(args.timestamp, durationSeconds) ?? pickAutoTime(report, durationSeconds)
 const tempDir = await mkdtemp(path.join(tmpdir(), "repo-demo-cover-"))
 const chromium = await loadChromium()
-const browser = await chromium.launch({ headless: true })
-const page = await browser.newPage({ viewport: { width: args.width, height: args.height }, deviceScaleFactor: 1 })
+const drawtextAvailable = !chromium && ffmpegHasDrawtext()
+const renderer = chromium
+  ? "chromium"
+  : drawtextAvailable
+    ? "ffmpeg-drawtext"
+    : "ffmpeg-frame-only"
+const browser = chromium ? await chromium.launch({ headless: true }) : null
+const page = browser
+  ? await browser.newPage({ viewport: { width: args.width, height: args.height }, deviceScaleFactor: 1 })
+  : null
+if (!chromium) {
+  if (drawtextAvailable) {
+    console.warn(
+      "[cover] Playwright 不可用，退化到 ffmpeg drawtext 渲染封面。文字层会比 chromium 渲染朴素一些，可设置 REPO_DEMO_RECORDER_FONT_FILE 指定 .ttf/.otf 字体路径获得更好排版。"
+    )
+  } else {
+    console.warn(
+      "[cover] Playwright 不可用，且系统 ffmpeg 没有 drawtext (libfreetype) 滤镜，进一步退化到\"只输出抽帧封面\"。\n" +
+        "    后续 embed-video-cover.mjs 仍能正常工作，但封面没有标题/副标题/badge 文字层。\n" +
+        "    需要文字层时请：1) 在目标项目 `npm i -D playwright`；或 2) 安装带 freetype 的 ffmpeg（macOS: brew install ffmpeg --HEAD 或带 freetype 的 build）。"
+    )
+  }
+}
+
+async function renderCoverDispatch(framePath, outPath) {
+  if (page) {
+    await renderCover(page, framePath, outPath, text, args)
+  } else if (drawtextAvailable) {
+    await renderCoverWithFfmpeg(framePath, outPath, text, args)
+  } else {
+    await renderCoverFrameOnly(framePath, outPath, args)
+  }
+}
+
+async function makeContactSheetDispatch(images, outPath) {
+  if (page) {
+    await makeContactSheet(page, images, outPath, args)
+    return
+  }
+  if (images.length === 0) return
+  // ffmpeg fallback：用 hstack+vstack 拼成 contact sheet。
+  // tile filter 只接受单个 video sequence，无法直接拼多个 input；hstack/vstack 才是多输入网格的正解。
+  const columns = Math.min(3, images.length)
+  const rows = Math.ceil(images.length / columns)
+  const inputs = []
+  for (const image of images) {
+    inputs.push("-i", image)
+  }
+  const portrait = Number(args.height) > Number(args.width)
+  const tileWidth = portrait ? 240 : 426
+  const tileHeight = portrait ? 426 : 240
+  const parts = []
+  for (let idx = 0; idx < images.length; idx += 1) {
+    parts.push(
+      `[${idx}:v]scale=${tileWidth}:${tileHeight}:force_original_aspect_ratio=decrease,pad=${tileWidth}:${tileHeight}:(ow-iw)/2:(oh-ih)/2:color=white,setsar=1[t${idx}]`
+    )
+  }
+  const rowLabels = []
+  // 不满一行的最后一行用透明 pad 填充，让 hstack 输入数稳定为 columns
+  for (let row = 0; row < rows; row += 1) {
+    const start = row * columns
+    const cellsInRow = Math.min(columns, images.length - start)
+    const padCount = columns - cellsInRow
+    const inputsForRow = []
+    for (let cell = 0; cell < cellsInRow; cell += 1) {
+      inputsForRow.push(`[t${start + cell}]`)
+    }
+    for (let pad = 0; pad < padCount; pad += 1) {
+      // 用 color filter 生成同尺寸的灰底占位
+      parts.push(
+        `color=c=0xf6f7f4:s=${tileWidth}x${tileHeight}:d=0.04,setsar=1[blank${row}_${pad}]`
+      )
+      inputsForRow.push(`[blank${row}_${pad}]`)
+    }
+    if (columns > 1) {
+      parts.push(`${inputsForRow.join("")}hstack=inputs=${columns}[row${row}]`)
+      rowLabels.push(`[row${row}]`)
+    } else {
+      rowLabels.push(inputsForRow[0])
+    }
+  }
+  if (rows > 1) {
+    parts.push(`${rowLabels.join("")}vstack=inputs=${rows}[out]`)
+  } else {
+    parts.push(`${rowLabels[0]}null[out]`)
+  }
+  await run("ffmpeg", [
+    "-y",
+    ...inputs,
+    "-filter_complex",
+    parts.join(";"),
+    "-map",
+    "[out]",
+    "-frames:v",
+    "1",
+    outPath
+  ])
+}
 
 try {
   await mkdir(path.dirname(outputPath), { recursive: true })
   const selectedFrame = path.join(tempDir, "selected-frame.png")
   await extractFrame(videoPath, selectedTime, selectedFrame)
-  await renderCover(page, selectedFrame, outputPath, text, args)
+  await renderCoverDispatch(selectedFrame, outputPath)
 
   let candidates = null
   if (args.candidatesDir) {
     const candidatesDir = path.resolve(args.candidatesDir)
-    await rm(candidatesDir, { recursive: true, force: true })
+    await prepareCandidatesDir(candidatesDir)
     await mkdir(candidatesDir, { recursive: true })
     const candidateImages = []
     const candidateMeta = []
@@ -336,12 +584,12 @@ try {
       const frame = path.join(candidatesDir, `candidate-${String(index + 1).padStart(2, "0")}-frame.png`)
       const cover = path.join(candidatesDir, `candidate-${String(index + 1).padStart(2, "0")}-cover.png`)
       await extractFrame(videoPath, seconds, frame)
-      await renderCover(page, frame, cover, text, args)
+      await renderCoverDispatch(frame, cover)
       candidateImages.push(cover)
       candidateMeta.push({ index: index + 1, ratio, seconds, frame, cover })
     }
     const contactSheet = path.join(candidatesDir, "contact-sheet.png")
-    await makeContactSheet(page, candidateImages, contactSheet, args)
+    await makeContactSheetDispatch(candidateImages, contactSheet)
     candidates = { dir: candidatesDir, contactSheet, items: candidateMeta }
     await writeFile(path.join(candidatesDir, "cover-candidates.json"), `${JSON.stringify(candidates, null, 2)}\n`)
   }
@@ -359,6 +607,7 @@ try {
         orientation: args.height > args.width ? "portrait" : "landscape",
         theme: args.theme,
         timestampSeconds: selectedTime,
+        renderer,
         text,
         candidates
       },
@@ -369,6 +618,6 @@ try {
   console.log(`Generated cover: ${outputPath}`)
   if (candidates?.contactSheet) console.log(`Generated cover candidates: ${candidates.contactSheet}`)
 } finally {
-  await browser.close()
+  if (browser) await browser.close()
   if (!args.keepTemp) await rm(tempDir, { recursive: true, force: true })
 }

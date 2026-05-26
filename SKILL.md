@@ -1,6 +1,6 @@
 ---
 name: repo-demo-recorder
-description: Create verified repository-native product walkthrough recordings with Playwright/browser automation, captions/subtitles, TTS narration, highlights, mock or seed data setup, quality gates, and committed artifacts. Use when Codex is asked to record a project demo, generate narrated walkthrough videos, add Chinese/English subtitles or voiceover, cover core business flows, create realistic data-entry recordings, produce recording scripts/guides, or turn UI QA work into reproducible video proof.
+description: Create verified repository-native product walkthrough recordings with Playwright/browser automation, captions/subtitles, TTS narration, highlights, mock or seed data setup, quality gates, and committed artifacts. Use when an agent (Claude Code / Codex / Cursor) is asked to record a project demo, generate narrated walkthrough videos, add Chinese/English subtitles or voiceover, cover core business flows, create realistic data-entry recordings, produce recording scripts/guides, or turn UI QA work into reproducible video proof.
 ---
 
 # Repo Demo Recorder
@@ -27,13 +27,47 @@ description: Create verified repository-native product walkthrough recordings wi
 
 更多选项见 `references/options.md`。场景文件结构见 `references/scenario-schema.md`。
 
+## 项目类型与录制源
+
+skill 内置的脚本化录制路径依赖 Playwright 自动驱动浏览器，只适合可以本地起 web server 的项目（Web App / SaaS / 本地后端 + 浏览器 UI）。识别到下列情况时，应优先走"外部录屏接入"工作流：
+
+- **iOS / macOS 原生 App**（Xcode 项目、`.xcodeproj/`、`*.xcworkspace/`、`project.yml` 由 XcodeGen 管理）：用 iOS 模拟器 + QuickTime 屏幕录制 / Xcode "Record App Preview" / Reincubate Camo / Screen Studio 录视频。
+- **Android 原生 App**（`build.gradle` + `app/src/main/AndroidManifest.xml`）：用 Android Emulator + `adb screenrecord` / Android Studio screen recorder / Screen Studio。
+- **桌面客户端**（Electron 没有 web 部分、Flutter Desktop、Tauri 桌面、SwiftUI for macOS）：用 Screen Studio / macOS QuickTime / OBS 录原始视频。
+- **CLI 工具**：用 asciinema 或 QuickTime 录终端窗口；本 skill 仅做后期。
+
+外部录屏接入工作流（不跑 `scaffold-repo-demo.mjs` 也能用）：
+
+1. 用上述外部工具录得 raw MP4，建议同时手写一份 `report.json`（只需 `captions[].title/body/startMs/endMs/kind` 与 `steps:[]`、`consoleMessages:[]`、`pageErrors:[]`、`responseErrors:[]` 几个最小字段，参考 `references/quality-gates.md` 中 "Report 最小字段"）。
+2. 用 `scripts/add-tts-narration.mjs` 加解说；竖屏录屏直接传 `--engine edge-tts --voice zh-CN-YunyangNeural`。
+3. 用 `scripts/generate-video-cover.mjs --theme mobile --width 1080 --height 1920` 抽帧生成候选封面。
+4. 用 `scripts/embed-video-cover.mjs --intro-duration-ms 2000` 嵌入封面，并按需 `trim-video-gap.mjs` 删除片头空白。
+5. 用 `scripts/validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` 跑媒体级校验。
+6. 用 `scripts/generate-review-page.mjs` 输出审片页；客户可发版用 `scripts/prepare-screen-studio-handoff.mjs` 打包给 Screen Studio。
+
+scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/project.yml/build.gradle` 并打印警告：generated runner 不能驱动原生 UI，请改走外部录屏接入工作流，并忽略 scenario 中的 `server/auth/healthPath` 字段。
+
+对 Web 项目，scaffold 现在会自动检测：
+
+- `pnpm-lock.yaml/yarn.lock/bun.lockb/package-lock.json` → 推断 `server.command`。注意 npm 必须用 `npm run dev`，pnpm/yarn/bun 可以 `pnpm dev`。
+- `src-tauri/tauri.conf.json` 的 `build.devUrl` 和 `beforeDevCommand` → 推断 Tauri 项目的 `baseUrl` 与 dev 命令，并提醒 Tauri invoke API 在浏览器中会失败。
+- `vite.config.{ts,js,mjs}` / `next.config.*` / `package.json` → 推断 Vite (5173)、Next (3000)、其他 Node 项目的默认端口。
+- `package.json` 中 `scripts.dev` / `scripts.start` 的 `-p PORT` / `--port PORT` → 优先使用脚本里写的端口，覆盖框架默认。
+- 项目根目录的 `.gitignore` → 录屏产物未被忽略时打印警告，避免误 commit 大文件。
+- Next.js 项目还会自动把 `/_next/static/*`、`/_next/webpack-hmr`、`/_next/data/development`、`/__nextjs_*` 预填进 `qualityGates.allowedResponseErrors`，避免 HMR/source-map 噪声让每次 validate 都 fail。
+- 写入型 flow（含 `data`）默认 `qualityGates.requireApiSuccess=true`，配合 `step.waitForApi` 让 runner 自动写 `report.apiAssertions[]`。`requireDbAssertions` 默认 false，因为 DB 断言需要用户自己提供 module（见下方）。
+
+显式传 `--base-url` 覆盖自动检测；scenario.json 落盘后仍可手工编辑 `server/baseUrl/healthPath`。
+
+`scaffold` 会校验 `--audience / --polish / --language / --subtitles / --surface` 的取值，拼错时 fail-fast 给出有效取值列表。
+
 ## 工作流
 
 1. **读上下文**：读取项目启动命令、测试命令、auth/dev-login、seed/mock、禁区文件、现有录屏脚本和设计目标。
 2. **定叙事和观众**：先把流程整理成“观众能理解的路径”。客户演示按“场景 -> 价值 -> 可控机制 -> 下一步”写字幕/旁白；内部评审才保留实现细节和风险点。如果用户要求先确认方案，必须先输出/落盘方案并等待确认。
 3. **生成场景**：可运行 `scripts/scaffold-repo-demo.mjs` 生成场景 JSON、脚本骨架和录屏指南。正式 demo 优先把长流程拆成多个 segment。
 4. **准备数据**：涉及 DB 写入前先备份；用 seed/upsert 创建稳定演示数据；避免生产数据和敏感信息入镜。客户可见内容使用“示例数据/演示租户”，不要把“mock/fixture”写进字幕或旁白。
-5. **实现录制脚本**：优先 Playwright。字幕用录屏安全 DOM overlay 或后期字幕文件；解说从 captions/narration 生成；高亮只短暂提示，点击/输入前立即清除。
+5. **实现录制脚本**：优先 Playwright。字幕用录屏安全 DOM overlay 或后期字幕文件；解说从 captions/narration 生成；高亮只短暂提示，点击/输入前立即清除。`page.goto` 默认 `waitUntil="domcontentloaded"`，**不要在 Next.js/Vite dev 项目里用 `networkidle`**（HMR/long-poll 永远不 idle）。需要等数据加载完时用 `step.wait` + selector，或在 `step.waitForApi` 中指定关键 API。
 6. **分段录制真实流程**：操作必须像真实用户；关键页面保留自然停留时间；表单数据要业务化，不要 `test/test`。正式交付默认一段一录、一段一 review；失败或画面不专业时重录该段，不把失败片段合进最终视频。
 7. **补 TTS 解说**：对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成音频并 mux；解说补充业务价值和验收点，不逐字朗读字幕或按钮。旁白时间应从 overlay 稳定后开始。
 8. **质量门禁**：检查 API POST 成功、页面无横向溢出、`pageErrors=[]`、高亮不滞留、允许的 404 有明确 allowlist，并做媒体级校验。
@@ -54,7 +88,7 @@ description: Create verified repository-native product walkthrough recordings wi
 
 ## 叙事规则
 
-- **客户演示**：面向业务/IT/安全负责人。字幕和旁白先讲客户能得到什么，例如减少切换、资料可追溯、操作可确认、权限可治理；技术词只作为支撑，不作为标题。
+- **客户演示**：面向业务/IT/安全负责人。字幕和旁白先讲客户能得到什么，例如减少切换、资料可追溯、操作可确认、权限可治理；技术词只作为支撑，不作为标题。`scenario.narrative.avoidVisibleTerms` 在 `validate-recording-report.mjs` 中会被强制校验，命中即门禁失败。
 - **内部评审**：可以讲实现边界、mock、接口、已知噪声和风险，但这些词不要进入客户可发版。
 - **培训 SOP**：步骤更慢，字段含义更明确，少用销售化形容。
 - **发布证明/PR**：聚焦变更前后、回归验证、错误修复和风险留存。
@@ -115,11 +149,13 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - `scripts/generate-review-page.mjs`：生成本地审片 HTML，集中查看视频、字幕时间线、封面候选、frame review 和质量门禁结果。
 - `scripts/polish-video.mjs`：做保守后期包装和导出 preset，包括客户桌面、客户手机、社媒竖屏、QA 证明和 README GIF。
 - `scripts/prepare-screen-studio-handoff.mjs`：打包 raw/narrated video、字幕、report、封面和说明，交给 Screen Studio 做专业时间线编辑。
-- `scripts/install-skill.mjs`：把本仓库安装到 `$CODEX_HOME/skills/repo-demo-recorder` 或 `~/.codex/skills/repo-demo-recorder`。
+- `scripts/install-skill.mjs`：把本仓库安装到 `$CODEX_HOME/skills/repo-demo-recorder`、`~/.codex/skills/repo-demo-recorder`，或 `~/.claude/skills/repo-demo-recorder`（`--target claude`）。
 - `scripts/check-skill.mjs`：开源仓库自检，校验必需文件、脚本语法和 scaffold smoke test。
 - `references/options.md`：录屏需求选项矩阵。
 - `references/scenario-schema.md`：场景配置结构和示例。
 - `references/quality-gates.md`：验收清单与常见失败处理。
+- `references/commands.md`：常用命令完整版（scaffold → 录制 → TTS → 封面 → 校验 → 审片 → 包装）。
+- `scripts/templates/playwright-runner.mjs`：scaffold 写出录屏脚本的模板源；改这里就能改所有新生成 runner 的行为。
 
 ## 推荐产物结构
 
@@ -155,16 +191,10 @@ docs/recordings/
 
 ## 常用命令
 
-```bash
-node <skill>/scripts/scaffold-repo-demo.mjs --root . --name add-data-flow --language zh-CN --subtitles open --flows core,add-data
-node <skill>/scripts/scaffold-repo-demo.mjs --root . --name mobile-demo --surface mobile --language zh-CN --subtitles both --flows mobile --audience customer --polish customer-ready
-node <skill>/scripts/add-tts-narration.mjs --video docs/recordings/add-data-flow.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-narrated.mp4 --language zh-CN --engine edge-tts --voice zh-CN-YunyangNeural --pad-mode freeze --pad-buffer-ms 300
-node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-cover.png --title "Product Demo" --subtitle "Customer-ready walkthrough" --candidates-dir docs/recordings/add-data-flow-cover-candidates
-node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/mobile-demo-narrated.mp4 --report docs/recordings/mobile-demo-report.json --out docs/recordings/mobile-demo-cover.png --title "Mobile Demo" --subtitle "Mobile product walkthrough" --width 1080 --height 1920 --theme mobile --candidates-dir docs/recordings/mobile-demo-cover-candidates
-node <skill>/scripts/embed-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --cover docs/recordings/add-data-flow-cover.png --out docs/recordings/add-data-flow-narrated.mp4 --intro-duration-ms 2000 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --narration-vtt docs/recordings/add-data-flow-narrated-narration.vtt --report docs/recordings/add-data-flow-cover-embed-report.json
-node <skill>/scripts/trim-video-gap.mjs --video docs/recordings/add-data-flow-narrated.mp4 --cover docs/recordings/add-data-flow-cover.png --out docs/recordings/add-data-flow-narrated.mp4 --remove-start-ms 2000 --remove-end-ms 8500 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --narration-vtt docs/recordings/add-data-flow-narrated-narration.vtt --report docs/recordings/add-data-flow-gap-trim-report.json
-node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --source-video docs/recordings/add-data-flow.mp4 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --require-audio --require-cover-art --expect-width 1440 --expect-height 960 --write-media-report docs/recordings/add-data-flow-media-report.json --write-frame-review docs/recordings/add-data-flow-frame-review
-node <skill>/scripts/generate-review-page.mjs --report docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --media-report docs/recordings/add-data-flow-media-report.json --cover docs/recordings/add-data-flow-cover.png --cover-candidates docs/recordings/add-data-flow-cover-candidates --frame-review docs/recordings/add-data-flow-frame-review --out docs/recordings/add-data-flow-review.html
-node <skill>/scripts/polish-video.mjs --video docs/recordings/add-data-flow-narrated.mp4 --out docs/recordings/add-data-flow-polished.mp4 --preset customer-desktop
-node <skill>/scripts/prepare-screen-studio-handoff.mjs --out docs/recordings/add-data-flow-screen-studio-handoff --target desktop --raw-video docs/recordings/add-data-flow.mp4 --narrated-video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --vtt docs/recordings/add-data-flow-narrated-narration.vtt --cover docs/recordings/add-data-flow-cover.png
-```
+完整命令清单见 `references/commands.md`。决策流程上你只需要记住：
+
+1. `scaffold-repo-demo.mjs` 生成 scenario + runner + guide。
+2. 跑 generated runner 录原始 MP4 + report.json。
+3. `add-tts-narration.mjs` 加解说，`generate-video-cover.mjs` 抽帧出封面，`embed-video-cover.mjs` 把封面嵌入 MP4，`trim-video-gap.mjs` 删开场空白。
+4. `validate-recording-report.mjs` 做质量门禁与抽帧复查。
+5. `generate-review-page.mjs` 输出本地审片 HTML；客户可发版用 `polish-video.mjs` 或 `prepare-screen-studio-handoff.mjs` 做最后包装。

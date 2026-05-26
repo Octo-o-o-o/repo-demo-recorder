@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { readFileSync } from "node:fs"
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 
@@ -224,6 +224,30 @@ function sanitizeFilePart(value) {
     .slice(0, 48) || "cue"
 }
 
+const FRAME_REVIEW_MARKER = "frame-review.json"
+const FRAME_REVIEW_FILE_PATTERN = /^(\d{3}-.+\.png|contact-sheet\.png|frame-review\.json)$/
+
+async function prepareFrameReviewDir(outputDir) {
+  if (!existsSync(outputDir)) return
+  const entries = await readdir(outputDir, { withFileTypes: true })
+  if (entries.length === 0) return
+  const hasMarker = entries.some((entry) => entry.isFile() && entry.name === FRAME_REVIEW_MARKER)
+  const unexpected = entries.filter(
+    (entry) => !(entry.isFile() && FRAME_REVIEW_FILE_PATTERN.test(entry.name))
+  )
+  if (!hasMarker && unexpected.length > 0) {
+    throw new Error(
+      `frame-review 目录已存在且包含非本工具生成的内容，拒绝写入以免覆盖：${outputDir}\n` +
+        `请改用一个新的 --write-frame-review 目录，或手动清空该目录后再重试。`
+    )
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && FRAME_REVIEW_FILE_PATTERN.test(entry.name)) {
+      await rm(path.join(outputDir, entry.name), { force: true })
+    }
+  }
+}
+
 async function writeFrameReview(report, args) {
   if (!args.writeFrameReview) return null
   const videoPath = args.sourceVideo || args.video
@@ -232,7 +256,7 @@ async function writeFrameReview(report, args) {
   }
 
   const outputDir = path.resolve(args.writeFrameReview)
-  await rm(outputDir, { recursive: true, force: true })
+  await prepareFrameReviewDir(outputDir)
   await mkdir(outputDir, { recursive: true })
 
   const captions = Array.isArray(report.captions) ? report.captions : []
@@ -318,6 +342,19 @@ function collectFailures(report, args) {
   const pageErrors = Array.isArray(report.pageErrors) ? report.pageErrors : []
   const responseErrors = Array.isArray(report.responseErrors) ? report.responseErrors : []
   const consoleMessages = Array.isArray(report.consoleMessages) ? report.consoleMessages : []
+  const captions = Array.isArray(report.captions) ? report.captions : []
+
+  // 把 scenario / report 中沉淀的允许清单也合并进来，避免每次都靠 CLI flag 重复传入
+  const scenarioAllowedResponse = Array.isArray(report.qualityGates?.allowedResponseErrors)
+    ? report.qualityGates.allowedResponseErrors
+    : []
+  const scenarioAllowedConsole = Array.isArray(report.qualityGates?.allowedConsoleErrors)
+    ? report.qualityGates.allowedConsoleErrors
+    : []
+  const allowResponse = [...args.allowResponse, ...scenarioAllowedResponse]
+  const allowConsole = [...args.allowConsole, ...scenarioAllowedConsole]
+  const allowPageErrors = args.allowPageErrors || Boolean(report.qualityGates?.allowPageErrors)
+  const maxOverflow = Math.max(args.maxOverflow, Number(report.qualityGates?.maxOverflow ?? 0))
 
   for (const [index, step] of steps.entries()) {
     if (step?.highlightVisible) {
@@ -325,18 +362,18 @@ function collectFailures(report, args) {
     }
 
     const overflow = Number(step?.overflow || 0)
-    if (overflow > args.maxOverflow) {
+    if (overflow > maxOverflow) {
       failures.push(`横向溢出：steps[${index}] ${step.label || ""} overflow=${overflow}`)
     }
   }
 
-  if (!args.allowPageErrors && pageErrors.length > 0) {
+  if (!allowPageErrors && pageErrors.length > 0) {
     failures.push(`pageErrors 非空：${pageErrors.length} 条`)
   }
 
   for (const item of responseErrors) {
     const text = asText(item)
-    if (!allowed(text, args.allowResponse)) {
+    if (!allowed(text, allowResponse)) {
       failures.push(`未允许的 response error：${text}`)
     }
   }
@@ -344,17 +381,44 @@ function collectFailures(report, args) {
   for (const item of consoleMessages) {
     const type = item?.type || "unknown"
     const text = asText(item?.text || item)
-    if (type === "error" && !allowed(text, args.allowConsole)) {
+    if (type === "error" && !allowed(text, allowConsole)) {
       failures.push(`未允许的 console error：${text}`)
     }
   }
 
+  // narrative.avoidVisibleTerms：客户演示禁止把内部词放进画面字幕/旁白。
+  // 直到现在该字段一直只写不读，这里实现真实校验。
+  const avoidVisibleTerms = Array.isArray(report.narrative?.avoidVisibleTerms)
+    ? report.narrative.avoidVisibleTerms
+    : []
+  if (avoidVisibleTerms.length > 0 && captions.length > 0) {
+    for (const [index, cue] of captions.entries()) {
+      const haystack = [cue.title, cue.body, cue.narration].filter(Boolean).join(" ")
+      if (!haystack) continue
+      const hit = avoidVisibleTerms.find((term) => term && haystack.toLowerCase().includes(String(term).toLowerCase()))
+      if (hit) {
+        failures.push(
+          `captions[${index}] 出现内部词 "${hit}"，违反 narrative.avoidVisibleTerms：${haystack}`
+        )
+      }
+    }
+  }
+
   if (report.qualityGates?.requireApiSuccess && !report.apiAssertions?.some((item) => item.ok)) {
-    failures.push("场景要求 API 成功断言，但 report.apiAssertions 中没有 ok=true")
+    failures.push(
+      "场景要求 API 成功断言（qualityGates.requireApiSuccess=true），但 report.apiAssertions 中没有 ok=true。" +
+        "请在 flow.steps 里给关键写入操作加 `waitForApi: { method: 'POST', path: '/api/...', ok: true }`；" +
+        "runner 会自动把命中的 response 写到 report.apiAssertions[]。如果是只读演示，请把 requireApiSuccess 改为 false。"
+    )
   }
 
   if (report.qualityGates?.requireDbAssertions && !report.dbAssertions?.some((item) => item.ok)) {
-    failures.push("场景要求 DB 落库断言，但 report.dbAssertions 中没有 ok=true")
+    failures.push(
+      "场景要求 DB 落库断言（qualityGates.requireDbAssertions=true），但 report.dbAssertions 中没有 ok=true。" +
+        "请在 flow.assertions 或 flow.steps 里加 `{ type: 'db', module: 'scripts/assert-source.mjs', exportName: 'default', params: {...} }`，" +
+        "对应模块导出一个 `async (params) => boolean | { ok, detail }` 函数；runner 会调用它并把结果写到 report.dbAssertions[]。" +
+        "如果当前 demo 不需要落库验证，请把 requireDbAssertions 改为 false。"
+    )
   }
 
   if (args.video || args.requireAudio || args.requireCoverArt) {

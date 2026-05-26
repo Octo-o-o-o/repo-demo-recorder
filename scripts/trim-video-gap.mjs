@@ -56,6 +56,8 @@ Options:
 
   if (!args.video) throw new Error("缺少 --video <mp4>")
   if (!args.out) throw new Error("缺少 --out <mp4>")
+  if (args.removeStartMs == null) throw new Error("缺少 --remove-start-ms <ms>")
+  if (args.removeEndMs == null) throw new Error("缺少 --remove-end-ms <ms>")
   args.removeStartMs = Number(args.removeStartMs)
   args.removeEndMs = Number(args.removeEndMs)
   args.videoCrf = Number(args.videoCrf)
@@ -172,10 +174,24 @@ async function shiftNarrationVtt(vttPath, removeStartMs, removeEndMs) {
     const parsed = parseVttTime(timestamp)
     return parsed == null ? timestamp : formatVttTime(shiftAcrossRemovedRange(parsed, removeStartMs, removeEndMs))
   })
-  const note = `NOTE repo-demo-recorder-removed-gap-ms: ${removeStartMs}-${removeEndMs} (${removedMs})\n\n`
-  const next = shifted.includes("NOTE repo-demo-recorder-removed-gap-ms:")
-    ? shifted
-    : shifted.replace(/^WEBVTT\s*\n/, `WEBVTT\n\n${note}`)
+  // 每次 trim 都追加一条 NOTE，便于审计多次 trim 的历史
+  const note = `NOTE repo-demo-recorder-removed-gap-ms: ${removeStartMs}-${removeEndMs} (${removedMs})`
+  const lines = shifted.split("\n")
+  if (lines[0] !== "WEBVTT") {
+    throw new Error(`narration-vtt 文件首行不是 WEBVTT：${resolved}`)
+  }
+  let insertIndex = 1
+  while (insertIndex < lines.length && lines[insertIndex].trim() === "") insertIndex += 1
+  while (
+    insertIndex < lines.length &&
+    lines[insertIndex].startsWith("NOTE repo-demo-recorder-removed-gap-ms:")
+  ) {
+    insertIndex += 1
+    while (insertIndex < lines.length && lines[insertIndex].trim() !== "") insertIndex += 1
+    while (insertIndex < lines.length && lines[insertIndex].trim() === "") insertIndex += 1
+  }
+  lines.splice(insertIndex, 0, note, "")
+  const next = lines.join("\n")
   await writeFile(resolved, next)
   return { path: resolved, removeStartMs, removeEndMs, removedMs }
 }
@@ -222,6 +238,10 @@ async function trimGap({ videoPath, coverPath, outputPath, probe, args }) {
   if (!mainVideo) throw new Error("源视频没有主 video stream")
   const audioStream = firstAudioStream(probe)
   const hasAudio = Boolean(audioStream)
+  // 若用户没传 --cover 但源视频里已嵌入封面流，则保留它（沿用源 PNG，避免静默丢失封面）。
+  // 显式传入 --cover 时优先用用户提供的封面。
+  const existingCoverStreams = (probe.streams ?? []).filter(isAttachedPic)
+  const preservedCoverStream = !coverPath && existingCoverStreams.length > 0 ? existingCoverStreams[0] : null
   const sourceVideoLabel = `[0:${mainVideo.index}]`
   const sourceAudioLabel = audioStream ? `[0:${audioStream.index}]` : null
   const removeStart = msToSeconds(args.removeStartMs)
@@ -264,7 +284,11 @@ async function trimGap({ videoPath, coverPath, outputPath, probe, args }) {
 
   ffmpegArgs.push("-filter_complex", parts.join(";"), "-map", "[outv]")
   if (hasAudio) ffmpegArgs.push("-map", "[outa]")
-  if (coverPath) ffmpegArgs.push("-map", "1:v:0")
+  if (coverPath) {
+    ffmpegArgs.push("-map", "1:v:0")
+  } else if (preservedCoverStream) {
+    ffmpegArgs.push("-map", `0:${preservedCoverStream.index}`)
+  }
   ffmpegArgs.push(
     "-c:v:0",
     args.videoCodec,
@@ -286,6 +310,19 @@ async function trimGap({ videoPath, coverPath, outputPath, probe, args }) {
       "title=Cover",
       "-metadata:s:v:1",
       "comment=Cover (front)"
+    )
+  } else if (preservedCoverStream) {
+    const existingTitle = preservedCoverStream.tags?.title || "Cover"
+    const existingComment = preservedCoverStream.tags?.comment || "Cover (front)"
+    ffmpegArgs.push(
+      "-c:v:1",
+      "copy",
+      "-disposition:v:1",
+      "attached_pic",
+      "-metadata:s:v:1",
+      `title=${existingTitle}`,
+      "-metadata:s:v:1",
+      `comment=${existingComment}`
     )
   }
   ffmpegArgs.push(outputPath)

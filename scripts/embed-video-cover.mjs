@@ -311,6 +311,31 @@ await readFile(videoPath)
 await readFile(coverPath)
 await mkdir(path.dirname(workOutputPath), { recursive: true })
 
+// 防止 in-place 二次 prepend cover intro：narration-report 里的 coverIntro 标记一旦存在，
+// 就说明视频已经被 prepend 过一段 cover slate；本次再 prepend 会让视频前面叠加多段 cover slate，
+// 而 VTT/report 只会按 delta 偏移（甚至 delta=0 不偏移），导致视频画面与字幕/解说严重错位。
+if (args.introDurationMs > 0 && args.narrationReport) {
+  const narrationResolvedPath = path.resolve(args.narrationReport)
+  try {
+    const existing = JSON.parse(await readFile(narrationResolvedPath, "utf8"))
+    const existingIntroMs = Number(existing?.coverIntro?.introDurationMs || 0)
+    if (existingIntroMs > 0) {
+      throw new Error(
+        `narration-report 已记录 cover intro=${existingIntroMs}ms，视频前面已经有一段 cover slate。\n` +
+          `再次传 --intro-duration-ms=${args.introDurationMs}ms 会让视频累计多段 cover slate，与字幕/解说错位。\n` +
+          `推荐：用未嵌入过 intro 的原始 narrated.mp4（以及对应的 narration-report / VTT）重新跑 embed-video-cover；\n` +
+          `或先用 trim-video-gap.mjs --remove-start-ms 0 --remove-end-ms ${existingIntroMs} 删掉已有 intro，再重新嵌入。\n` +
+          `若确实只想刷新 attached_pic 封面元数据而不再加 visible intro，请去掉 --intro-duration-ms。`
+      )
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("narration-report 已记录 cover intro")) {
+      throw error
+    }
+    // 文件不存在 / 不是 JSON 不算致命：继续后续流程
+  }
+}
+
 const sourceProbe = await ffprobeJson(videoPath)
 let embedInputPath = videoPath
 let embedSourceProbe = sourceProbe

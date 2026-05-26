@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
-import { access, mkdir, writeFile } from "node:fs/promises"
+import { access, mkdir, readFile, writeFile } from "node:fs/promises"
+import { existsSync, readdirSync } from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 const DEFAULTS = {
   root: ".",
@@ -10,11 +12,176 @@ const DEFAULTS = {
   subtitles: "open",
   flows: "core",
   out: "docs/recordings",
-  baseUrl: "http://127.0.0.1:3210",
+  baseUrl: null,
   audience: "qa-proof",
   polish: "formal-delivery",
   surface: "auto",
   force: false
+}
+
+// 检测项目类型与默认运行参数。返回 { kind, packageManager, devCommand, port, baseUrl, warnings }
+async function detectProject(rootDir) {
+  const result = {
+    kind: "unknown",
+    packageManager: "npm",
+    devCommand: null,
+    port: null,
+    baseUrl: null,
+    healthPath: "/",
+    warnings: []
+  }
+
+  // 原生项目识别（不能跑 Playwright）
+  const nativeMarkers = [
+    { name: "iOS / macOS (Xcode)", pattern: /\.(xcodeproj|xcworkspace)$/, kind: "ios" },
+    { name: "iOS / macOS (XcodeGen project.yml)", file: "project.yml", kind: "ios" }
+  ]
+  try {
+    const entries = readdirSync(rootDir)
+    for (const marker of nativeMarkers) {
+      if (marker.pattern && entries.some((entry) => marker.pattern.test(entry))) {
+        result.kind = marker.kind
+        result.warnings.push(
+          `检测到原生 App 项目 (${marker.name})：generated runner 不能驱动原生 UI，请改走 SKILL.md 中的"外部录屏接入"工作流，并忽略 server/auth/healthPath 字段。`
+        )
+        return result
+      }
+      if (marker.file && entries.includes(marker.file)) {
+        result.kind = marker.kind
+        result.warnings.push(
+          `检测到原生 App 项目 (${marker.name})：generated runner 不能驱动原生 UI，请改走 SKILL.md 中的"外部录屏接入"工作流，并忽略 server/auth/healthPath 字段。`
+        )
+        return result
+      }
+    }
+    if (entries.some((entry) => /^build\.gradle/.test(entry))) {
+      const hasAndroidManifest = existsSync(path.join(rootDir, "app/src/main/AndroidManifest.xml"))
+      if (hasAndroidManifest) {
+        result.kind = "android"
+        result.warnings.push(
+          "检测到 Android 原生 App 项目：generated runner 不能驱动原生 UI，请改走 SKILL.md 中的\"外部录屏接入\"工作流。"
+        )
+        return result
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // package manager 检测
+  if (existsSync(path.join(rootDir, "pnpm-lock.yaml"))) result.packageManager = "pnpm"
+  else if (existsSync(path.join(rootDir, "yarn.lock"))) result.packageManager = "yarn"
+  else if (existsSync(path.join(rootDir, "bun.lockb"))) result.packageManager = "bun"
+  else if (existsSync(path.join(rootDir, "package-lock.json"))) result.packageManager = "npm"
+
+  // package.json 解析
+  const pkgPath = path.join(rootDir, "package.json")
+  let pkg = null
+  if (existsSync(pkgPath)) {
+    try {
+      pkg = JSON.parse(await readFile(pkgPath, "utf8"))
+    } catch {
+      // ignore
+    }
+  }
+
+  // Tauri 检测：tauri.conf.json 优先（包含 devUrl 和 beforeDevCommand）
+  const tauriConfPaths = [
+    path.join(rootDir, "src-tauri/tauri.conf.json"),
+    path.join(rootDir, "tauri.conf.json")
+  ]
+  for (const tauriConfPath of tauriConfPaths) {
+    if (existsSync(tauriConfPath)) {
+      try {
+        const tauriConf = JSON.parse(await readFile(tauriConfPath, "utf8"))
+        const devUrl = tauriConf?.build?.devUrl
+        const beforeDev = tauriConf?.build?.beforeDevCommand
+        if (devUrl) {
+          result.kind = "tauri"
+          result.baseUrl = devUrl
+          try {
+            result.port = Number(new URL(devUrl).port) || null
+          } catch {
+            // ignore
+          }
+          if (beforeDev) {
+            result.devCommand = beforeDev
+          } else if (pkg?.scripts?.dev) {
+            result.devCommand = `${result.packageManager} dev`
+          }
+          result.warnings.push(
+            "检测到 Tauri 项目：录屏会在浏览器中跑 Vite/前端构建，调用 Tauri invoke API 的代码会失败并产生 pageError。建议为 demo 加 `if (window.__TAURI__) {...} else {/* mock */}` 兜底，或为 console error/pageError 配置 allowlist。"
+          )
+          return result
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (pkg) {
+    // Vite 检测
+    const isVite =
+      Boolean(pkg.devDependencies?.vite || pkg.dependencies?.vite) ||
+      existsSync(path.join(rootDir, "vite.config.ts")) ||
+      existsSync(path.join(rootDir, "vite.config.js")) ||
+      existsSync(path.join(rootDir, "vite.config.mjs"))
+    // Next 检测
+    const isNext =
+      Boolean(pkg.devDependencies?.next || pkg.dependencies?.next) ||
+      existsSync(path.join(rootDir, "next.config.js")) ||
+      existsSync(path.join(rootDir, "next.config.mjs")) ||
+      existsSync(path.join(rootDir, "next.config.ts"))
+
+    if (isVite) {
+      result.kind = result.kind === "unknown" ? "vite" : result.kind
+      result.port = result.port || 5173
+      // 检查 vite.config 中是否覆盖了端口
+      for (const viteConfig of ["vite.config.ts", "vite.config.js", "vite.config.mjs"]) {
+        const configPath = path.join(rootDir, viteConfig)
+        if (existsSync(configPath)) {
+          try {
+            const text = await readFile(configPath, "utf8")
+            const portMatch = text.match(/port:\s*(\d+)/)
+            if (portMatch) result.port = Number(portMatch[1])
+          } catch {
+            // ignore
+          }
+          break
+        }
+      }
+    } else if (isNext) {
+      result.kind = "next"
+      result.port = 3000
+    } else if (pkg.scripts?.dev || pkg.scripts?.start) {
+      result.kind = "node"
+      result.port = 3000
+    }
+
+    // npm 必须 `npm run <script>`，其余包管理器（pnpm/yarn/bun）允许 `<pm> <script>` 简写。
+    // 历史上这里输出过 "npm dev" 这种无效命令，runner 会立刻报 "Unknown command: dev"。
+    const runPrefix =
+      result.packageManager === "npm" ? "npm run" : result.packageManager
+    if (pkg.scripts?.dev) {
+      result.devCommand = `${runPrefix} dev`
+    } else if (pkg.scripts?.start) {
+      result.devCommand = `${runPrefix} start`
+    }
+
+    // 如果 dev/start 脚本里显式带了 `-p PORT` 或 `--port PORT`，
+    // 优先使用脚本里的端口，避免按框架默认端口去 fetch baseUrl。
+    const scriptValue = pkg.scripts?.dev || pkg.scripts?.start || ""
+    const explicitPort = scriptValue.match(/(?:^|\s)(?:-p|--port)[\s=](\d{2,5})\b/)
+    if (explicitPort) {
+      result.port = Number(explicitPort[1])
+    }
+  }
+
+  if (result.port) {
+    result.baseUrl = `http://localhost:${result.port}`
+  }
+  return result
 }
 
 function parseArgs(argv) {
@@ -27,7 +194,7 @@ Options:
   --language <locale>    zh-CN or en-US (default: zh-CN)
   --subtitles <mode>     none | open | sidecar | both (default: open)
   --flows <list>         Comma-separated flows, e.g. core,mobile,add-data
-  --baseUrl <url>        Local app URL (default: http://127.0.0.1:3210)
+  --base-url <url>       Local app URL (auto-detected from package.json/tauri.conf.json/vite.config when omitted)
   --audience <kind>      customer | internal-review | qa-proof | training | release-pr
   --polish <level>       quick-proof | formal-delivery | customer-ready
   --surface <surface>    auto | desktop | mobile | tablet | multi (default: auto)
@@ -50,9 +217,9 @@ Options:
       throw new Error(`无法识别参数：${token}`)
     }
 
-    const key = token.slice(2)
+    const key = toCamelCase(token.slice(2))
     const next = argv[index + 1]
-    if (!next || next.startsWith("--")) {
+    if (next === undefined || next.startsWith("--")) {
       throw new Error(`参数 ${token} 缺少取值`)
     }
 
@@ -74,8 +241,42 @@ Options:
   if (!allowedSurfaces.has(args.surface)) {
     throw new Error(`--surface must be one of: ${Array.from(allowedSurfaces).join(", ")}`)
   }
+  const allowedAudiences = new Set([
+    "customer",
+    "internal-review",
+    "qa-proof",
+    "training",
+    "release-pr"
+  ])
+  if (!allowedAudiences.has(args.audience)) {
+    throw new Error(
+      `--audience must be one of: ${Array.from(allowedAudiences).join(", ")} (received: ${args.audience})`
+    )
+  }
+  const allowedPolish = new Set(["quick-proof", "formal-delivery", "customer-ready"])
+  if (!allowedPolish.has(args.polish)) {
+    throw new Error(
+      `--polish must be one of: ${Array.from(allowedPolish).join(", ")} (received: ${args.polish})`
+    )
+  }
+  const allowedLanguages = new Set(["zh-CN", "zh-TW", "en-US"])
+  if (!allowedLanguages.has(args.language)) {
+    throw new Error(
+      `--language must be one of: ${Array.from(allowedLanguages).join(", ")} (received: ${args.language})`
+    )
+  }
+  const allowedSubtitles = new Set(["none", "open", "sidecar", "both"])
+  if (!allowedSubtitles.has(args.subtitles)) {
+    throw new Error(
+      `--subtitles must be one of: ${Array.from(allowedSubtitles).join(", ")} (received: ${args.subtitles})`
+    )
+  }
 
   return args
+}
+
+function toCamelCase(value) {
+  return value.replace(/-([a-z0-9])/g, (_, char) => char.toUpperCase())
 }
 
 function slugify(value) {
@@ -104,7 +305,7 @@ async function writeNew(filePath, content, force) {
   await writeFile(filePath, content)
 }
 
-function buildScenario(args) {
+function buildScenario(args, detection = null) {
   const flowLabels = {
     core: "核心浏览路径",
     "add-data": "新增数据流程",
@@ -115,6 +316,61 @@ function buildScenario(args) {
     "empty-error-loading": "空状态、错误状态与加载态",
     mobile: "移动端关键路径"
   }
+  const isZh = args.language !== "en-US"
+  // 中文场景下默认用中文文案，避免封面/字幕里突然冒出英文造成违和
+  const coverDefaults = isZh
+    ? {
+        customerDesktop: {
+          title: "产品演示",
+          subtitle: "面向客户的可发版走查",
+          line: "首页 · 搜索 · 自动化",
+          badge: "客户演示"
+        },
+        customerMobile: {
+          title: "移动端演示",
+          subtitle: "移动端产品走查",
+          line: "竖屏 UI · 触控流程 · 移动端字幕",
+          badge: "移动端演示"
+        },
+        proof: {
+          title: "项目演示",
+          subtitle: "可验证的产品走查",
+          line: "脚本录制 · 字幕 · 质量报告",
+          badge: "已验证演示"
+        },
+        training: {
+          title: "操作培训",
+          subtitle: "面向新成员的步骤讲解",
+          line: "字段含义 · 操作顺序 · 验收点",
+          badge: "培训 SOP"
+        }
+      }
+    : {
+        customerDesktop: {
+          title: "Product Demo",
+          subtitle: "Customer-ready product walkthrough",
+          line: "Home · Search · Automation",
+          badge: "CUSTOMER DEMO"
+        },
+        customerMobile: {
+          title: "Mobile Product Demo",
+          subtitle: "Mobile product walkthrough",
+          line: "Portrait UI · Touch flow · Mobile captions",
+          badge: "MOBILE DEMO"
+        },
+        proof: {
+          title: "Verified Demo",
+          subtitle: "Verified product walkthrough",
+          line: "Scripted recording · Captions · Quality report",
+          badge: "VERIFIED DEMO"
+        },
+        training: {
+          title: "Training Walkthrough",
+          subtitle: "Step-by-step training",
+          line: "Fields · Steps · Acceptance",
+          badge: "TRAINING"
+        }
+      }
   const inferredSurface =
     args.surface === "auto"
       ? args.flows.length === 1 && args.flows[0] === "mobile"
@@ -175,8 +431,10 @@ function buildScenario(args) {
         args.audience === "customer" ? "客户价值 + 可控机制" : "操作目标 + 验收点"
     },
     narration: {
-      enabled: false,
-      engine: args.audience === "customer" ? "edge-tts" : "local-system",
+      // 正式交付及以上默认启用 TTS：与 SKILL.md "对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成" 对齐。
+      enabled: args.polish !== "quick-proof",
+      // customer audience 优先 edge-tts（联网）以追求自然语音；其他 audience 默认本机 macOS say，避免把内部 demo 文本送到第三方服务。
+      engine: args.audience === "customer" ? "edge-tts" : "macos-say",
       language: args.language,
       voice:
         args.audience === "customer"
@@ -212,57 +470,59 @@ function buildScenario(args) {
       chapterPosition: "top-center",
       captionPosition: isPortrait ? "bottom-center" : "bottom-left"
     },
-    cover: {
-      enabled: args.polish !== "quick-proof",
-      mode: args.polish === "quick-proof" ? "standard" : "with-candidates",
-      width: isPortrait ? 1080 : 1280,
-      height: isPortrait ? 1920 : 720,
-      title: args.audience === "customer" ? "Product Demo" : `${flowLabels[args.flows[0]] || "项目演示"}`,
-      subtitle:
+    cover: (() => {
+      const profile =
         args.audience === "customer"
           ? isMobile
-            ? "Mobile product walkthrough"
-            : "Customer-ready product walkthrough"
-          : "Verified product walkthrough",
-      line:
-        args.audience === "customer"
-          ? isMobile
-            ? "Portrait UI · Touch flow · Mobile captions"
-            : "Home · Search · Automation"
-          : "Scripted recording · Captions · Quality report",
-      badge:
-        args.audience === "customer"
-          ? isMobile
-            ? "MOBILE DEMO"
-            : "CUSTOMER DEMO"
+            ? coverDefaults.customerMobile
+            : coverDefaults.customerDesktop
           : args.audience === "training"
-            ? "TRAINING"
-            : "VERIFIED DEMO",
-      timestamp: "auto"
-    },
+            ? coverDefaults.training
+            : coverDefaults.proof
+      return {
+        enabled: args.polish !== "quick-proof",
+        mode: args.polish === "quick-proof" ? "standard" : "with-candidates",
+        width: isPortrait ? 1080 : 1280,
+        height: isPortrait ? 1920 : 720,
+        title: profile.title,
+        subtitle: profile.subtitle,
+        line: profile.line,
+        badge: profile.badge,
+        timestamp: "auto"
+      }
+    })(),
     segmentation: {
       enabled: args.polish !== "quick-proof",
       reviewEachSegment: args.polish !== "quick-proof",
       mergeAfterPass: args.polish !== "quick-proof",
       rerecordOnFailure: args.polish === "customer-ready"
     },
+    // auth 字段保留 storageState（runner 唯一会读的字段）；mode/endpoint/payload 留作人工 review 提示，
+    // 仅在 dev-login 流程里手动填充。runner 不会自动调用 endpoint。
     auth: {
       mode: "manual-or-dev-login",
+      storageState: null,
+      // 如果你的项目有 dev-login API，可补 endpoint/payload，并在 flow.steps 中加一段
+      // { type: "goto", url: endpoint } 或自定义脚本去调用 fetch；runner 不会自动用它们。
       endpoint: null,
-      payload: null,
-      storageState: null
+      payload: null
     },
     data: {
       strategy: args.flows.some((flow) => flow.includes("data")) ? "ui-write" : "readonly",
-      backupCommand: "npm run db:backup",
+      // backupCommand 仅在写入型录屏前提示用户运行；不会被 runner 自动调用。请改成项目实际的备份命令或设为 null。
+      backupCommand: null,
       seedCommand: null,
-      demoPrefix: "演示",
+      demoPrefix: isZh ? "演示" : "demo",
       cleanup: false
     },
     server: {
-      command: "npm run dev",
-      port: 3210,
-      healthPath: "/login"
+      // 由 scaffold 自动检测 packageManager + dev script；检测不到时回退到 "npm run dev"。
+      command: detection?.devCommand || "npm run dev",
+      // healthPath 默认为根路径；改成项目真实的健康检查路径以减少误报。
+      healthPath: detection?.healthPath || "/",
+      // dev server 启动超时（毫秒）。大型 Next.js / Prisma / monorepo 首次启动可能要 2-3 分钟，
+      // 当前 120000 在小型项目够用，超时不够请改大。runner 会读这个值。
+      startupTimeoutMs: 120_000
     },
     outputs: {
       dir: args.out,
@@ -271,9 +531,9 @@ function buildScenario(args) {
       report: true,
       finalScreenshot: true,
       sidecarSubtitles: ["sidecar", "both"].includes(args.subtitles),
-      narratedMp4: false,
-      narrationTranscript: false,
-      mediaReport: false,
+      narratedMp4: args.polish !== "quick-proof",
+      narrationTranscript: args.polish !== "quick-proof",
+      mediaReport: args.polish !== "quick-proof",
       reviewPage: args.polish !== "quick-proof",
       polishedMp4: args.polish === "customer-ready",
       screenStudioHandoff: false,
@@ -297,20 +557,49 @@ function buildScenario(args) {
       sampleCueKinds: ["chapter", "caption"],
       sampleOffsetsMs: [-220, -80, 80, 220]
     },
-    qualityGates: {
-      maxOverflow: 0,
-      allowPageErrors: false,
-      allowedResponseErrors: [],
-      requireApiSuccess: args.flows.some((flow) => flow.includes("data")),
-      requireDbAssertions: args.flows.some((flow) => flow.includes("data")),
-      media: {
-        requireAudio: false,
-        minDurationRatio: 0.98,
-        minAudioMaxDb: -50,
-        expectWidth: activeSurface.videoSize.width,
-        expectHeight: activeSurface.videoSize.height
+    qualityGates: (() => {
+      // 不同 dev server 会产生不同的"无害噪声"。Next.js dev 模式必然会有
+      // /_next/static/* HMR 探针、source map 拉取失败、`/favicon.ico` 404、
+      // 长连接 webpack-hmr 等，全部进 responseErrors 会让用户每次跑都 fail。
+      const noisePresets = {
+        next: [
+          "/_next/static",
+          "/_next/webpack-hmr",
+          "/_next/data/development",
+          "/__nextjs_original-stack-frames",
+          "/__nextjs_source-map"
+        ],
+        vite: ["/@vite/client", "/@react-refresh", "/__vite_ping"],
+        tauri: []
       }
-    },
+      const detectedAllowed = noisePresets[detection?.kind] || []
+      const writeFlow = args.flows.some((flow) => flow.includes("data"))
+      return {
+        maxOverflow: 0,
+        // allowPageErrors / allowedResponseErrors / allowedConsoleErrors 由 validate-recording-report.mjs
+        // 自动从 report.qualityGates 读取，无需再传 CLI flag。把已知噪声写在这里即可全流程沉淀。
+        allowPageErrors: false,
+        allowedResponseErrors: detectedAllowed,
+        allowedConsoleErrors: [],
+        // 写入型 flow 默认要求 API 成功断言；runner 会把每个 step.waitForApi 成功的
+        // response 自动写到 report.apiAssertions[]，无需手动维护。
+        requireApiSuccess: writeFlow,
+        // DB 落库断言需要用户自己在 flow.steps 里加 type=="db" 节点（runner 不会自动
+        // 连数据库）；默认不开，避免新手 scaffold 后必 fail。需要时再手动改为 true 并
+        // 在 step 中提供 prismaQuery/sqlPath。
+        requireDbAssertions: false,
+        media: {
+          // 启用 TTS 时默认要求音轨；纯 quick-proof 不强制。
+          requireAudio: args.polish !== "quick-proof",
+          // 启用 freeze padding 时输出可能比源略长，所以设 max 让超长被警告；可按需调高。
+          minDurationRatio: 0.98,
+          maxDurationRatio: null,
+          minAudioMaxDb: -50,
+          expectWidth: activeSurface.videoSize.width,
+          expectHeight: activeSurface.videoSize.height
+        }
+      }
+    })(),
     flows: args.flows.map((flow) => ({
       id: flow,
       surface: flow === "mobile" ? "mobile" : primarySurface,
@@ -349,12 +638,21 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
         ? "平板端"
         : "桌面端横屏"
   const coverRatioText = Number(coverSize.height) > Number(coverSize.width) ? "9:16 竖屏" : "16:9 横屏"
+  // 命令中直接复用 scenario.cover.* 的真实文案（按 language 已国际化），
+  // 不再 hardcode 英文标题/副标题，避免用户照搬命令把中文封面覆盖成英文。
+  const coverTitle = scenario.cover?.title || (args.language === "en-US" ? "Product Demo" : "产品演示")
   const coverSubtitle =
-    scenario.primarySurface === "mobile"
-      ? "Mobile product walkthrough"
-      : args.audience === "customer"
-        ? "Customer-ready product walkthrough"
-        : "Verified product walkthrough"
+    scenario.cover?.subtitle ||
+    (args.language === "en-US"
+      ? scenario.primarySurface === "mobile"
+        ? "Mobile product walkthrough"
+        : args.audience === "customer"
+          ? "Customer-ready product walkthrough"
+          : "Verified product walkthrough"
+      : "可验证的产品走查")
+  const backupHint = scenario.data?.backupCommand
+    ? `先运行场景中的 \`data.backupCommand\` (\`${scenario.data.backupCommand}\`) 备份数据库。`
+    : "把 `scenario.data.backupCommand` 改成你项目里实际的备份命令（例如 `docker compose exec db pg_dump ... > backup.sql`），并在录屏前手动执行；当前默认是 null，runner 不会自动备份。"
 
   return `# 录屏说明
 
@@ -374,10 +672,10 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
 
 ## 录制前
 
-1. 确认本地服务依赖可用。
-2. 如果场景会写入数据库，先运行场景中的 \`data.backupCommand\`。
-3. 补齐场景 JSON 里的 route、selector、API 断言、DB 断言和字幕文案。
-4. 避免真实客户数据、真实密码、token、邮箱验证码入镜。
+1. 确认本地服务依赖可用。如果项目依赖 PostgreSQL/Redis/外部服务（如 Tauri devUrl、worker 进程），请额外手动启动；\`scenario.server.command\` 只会启动单一 dev server。
+2. 如果场景会写入数据库：${backupHint}
+3. 补齐场景 JSON 里的 route、selector、\`step.waitForApi\`（API 断言）和 \`flow.assertions[].type=="db"\`（DB 落库断言，需配套写一个 \`async (params) => boolean\` 的 module）。
+4. 避免真实客户数据、真实密码、token、邮箱验证码入镜；登录优先使用 dev-login + \`auth.storageState\` 或专用演示租户。
 5. 如果目标观众是客户，字幕和旁白先讲客户价值，再讲可控机制；不要把 mock、fixture、临时脚本、dev warning 等内部词放进画面。
 6. 如果项目同时有桌面端和手机版，手机版单独录制竖屏版本；不要把桌面横屏视频直接裁成手机视频。
 
@@ -401,7 +699,7 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 正式交付建议生成标准 ${coverRatioText} 封面，并先查看候选图：
 
 \`\`\`bash
-node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-cover.png --title "${args.audience === "customer" ? "Product Demo" : "Verified Demo"}" --subtitle "${coverSubtitle}" --width ${coverSize.width} --height ${coverSize.height} --theme ${scenario.primarySurface === "mobile" ? "mobile" : args.audience === "training" ? "training" : args.audience === "customer" ? "customer" : "proof"} --candidates-dir ${args.out}/${args.name}-cover-candidates
+node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-cover.png --title "${coverTitle}" --subtitle "${coverSubtitle}" --width ${coverSize.width} --height ${coverSize.height} --theme ${scenario.primarySurface === "mobile" ? "mobile" : args.audience === "training" ? "training" : args.audience === "customer" ? "customer" : "proof"} --candidates-dir ${args.out}/${args.name}-cover-candidates
 \`\`\`
 
 检查 \`${args.out}/${args.name}-cover-candidates/contact-sheet.png\` 后，如果自动选择的画面不够代表产品主线，使用 \`--timestamp 00:00:36\` 指定更合适的帧重新生成。
@@ -469,647 +767,64 @@ ${isPortrait ? "- 竖屏手机视频的字幕使用底部安全区，但必须�
 `
 }
 
-function buildRunner(scenarioRelativePath, scriptToRootRelative) {
-  return `#!/usr/bin/env node
+// runner 源码独立放在 scripts/templates/playwright-runner.mjs，便于直接 lint / IDE 跳转，
+// 不再是巨大的字符串模板嵌入。scaffold 时把两个占位字符串替换为真实路径。
+const __scaffoldFile = fileURLToPath(import.meta.url)
+const RUNNER_TEMPLATE_PATH = path.resolve(
+  path.dirname(__scaffoldFile),
+  "templates",
+  "playwright-runner.mjs"
+)
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { performance } from "node:perf_hooks"
-import { spawn } from "node:child_process"
-import { fileURLToPath } from "node:url"
-import path from "node:path"
-import { chromium } from "playwright"
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-const projectRoot = path.resolve(__dirname, ${JSON.stringify(scriptToRootRelative)})
-const scenarioPath = path.resolve(projectRoot, ${JSON.stringify(scenarioRelativePath)})
-const scenario = JSON.parse(await readFile(scenarioPath, "utf8"))
-const outputDir = scenario.outputs?.dir && path.isAbsolute(scenario.outputs.dir)
-  ? scenario.outputs.dir
-  : path.resolve(projectRoot, scenario.outputs?.dir || "docs/recordings")
-await mkdir(outputDir, { recursive: true })
-
-const report = {
-  createdAt: new Date().toISOString(),
-  baseUrl: scenario.baseUrl,
-  scenario: scenario.name,
-  surface: scenario.surface || scenario.primarySurface || "desktop",
-  language: scenario.language,
-  subtitles: scenario.subtitles,
-  demoData: {},
-  captions: [],
-  steps: [],
-  consoleMessages: [],
-  pageErrors: [],
-  responseErrors: []
-}
-const wantsOpenCaptions = ["open", "both"].includes(scenario.subtitles)
-const wantsAnyCaptions = scenario.subtitles !== "none"
-const overlaySettleMs = Number(scenario.overlay?.settleMs ?? 160)
-let startedServer = null
-const activeSurface =
-  scenario.surfaces?.[scenario.primarySurface || scenario.surface] ||
-  scenario.surfaces?.[scenario.surface] ||
-  {
-    viewport: scenario.viewport || { width: 1440, height: 960 },
-    videoSize: scenario.recording?.videoSize || scenario.viewport || { width: 1440, height: 960 }
-  }
-const contextViewport = activeSurface.viewport || scenario.viewport || { width: 1440, height: 960 }
-const videoSize = activeSurface.videoSize || scenario.recording?.videoSize || contextViewport
-
-const RECORDER_STYLES = \`
-  [data-recorder-chapter] {
-    position: fixed;
-    left: 50%;
-    top: 28px;
-    transform: translateX(-50%);
-    z-index: 2147483647;
-    width: min(720px, calc(100vw - 112px));
-    padding: 15px 18px 16px 22px;
-    border-left: 5px solid #0f62fe;
-    border-radius: 8px;
-    background: rgba(17, 24, 39, 0.94);
-    color: #f8fafc;
-    font: 500 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    contain: layout paint;
-    backface-visibility: hidden;
-    will-change: opacity;
-    transition: opacity 90ms ease-out, visibility 0s linear 90ms;
-  }
-  [data-recorder-chapter][data-visible="true"] {
-    opacity: 1;
-    visibility: visible;
-    transition: opacity 90ms ease-out;
-  }
-  [data-recorder-chapter] strong {
-    display: block;
-    margin-bottom: 4px;
-    color: #fff;
-    font-size: 24px;
-    line-height: 1.2;
-    letter-spacing: 0;
-  }
-  [data-recorder-caption] {
-    position: fixed;
-    left: 28px;
-    bottom: 28px;
-    z-index: 2147483646;
-    max-width: min(560px, calc(100vw - 56px));
-    padding: 14px 18px;
-    border-left: 3px solid #0f62fe;
-    background: rgba(24, 31, 44, 0.9);
-    color: #f8fafc;
-    font: 500 15px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    box-shadow: 0 16px 44px rgba(15, 23, 42, 0.24);
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    contain: layout paint;
-    backface-visibility: hidden;
-    will-change: opacity;
-    transition: opacity 90ms ease-out, visibility 0s linear 90ms;
-  }
-  [data-recorder-caption][data-visible="true"] {
-    opacity: 1;
-    visibility: visible;
-    transition: opacity 90ms ease-out;
-  }
-  [data-recorder-caption] strong {
-    display: block;
-    margin-bottom: 2px;
-    color: #78a9ff;
-    font-size: 12px;
-    line-height: 1.4;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  [data-recorder-highlight] {
-    position: fixed;
-    z-index: 2147483645;
-    border: 2px solid #0f62fe;
-    background: rgba(15, 98, 254, 0.11);
-    box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.03);
-    pointer-events: none;
-    transition: opacity 120ms ease;
-  }
-  @media (max-width: 640px) {
-    [data-recorder-chapter] {
-      left: 14px;
-      right: 14px;
-      top: max(14px, env(safe-area-inset-top));
-      transform: none;
-      width: auto;
-      padding: 12px 14px 13px 17px;
-      border-left-width: 4px;
-      border-radius: 8px;
-    }
-    [data-recorder-chapter] strong {
-      font-size: 18px;
-      line-height: 1.18;
-    }
-    [data-recorder-caption] {
-      left: 14px;
-      right: 14px;
-      bottom: max(16px, env(safe-area-inset-bottom));
-      max-width: none;
-      padding: 11px 13px 12px;
-      border-left: 0;
-      border-top: 3px solid #0f62fe;
-      border-radius: 8px;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    [data-recorder-caption] strong {
-      font-size: 11px;
-      letter-spacing: 0.04em;
-    }
-  }
-\`
-
-const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({
-  viewport: contextViewport,
-  recordVideo: { dir: outputDir, size: videoSize },
-  locale: scenario.language === "en-US" ? "en-US" : "zh-CN",
-  timezoneId: "Asia/Shanghai",
-  isMobile: Boolean(activeSurface.isMobile ?? scenario.device?.isMobile),
-  hasTouch: Boolean(activeSurface.hasTouch ?? scenario.device?.hasTouch),
-  deviceScaleFactor: Number(activeSurface.deviceScaleFactor ?? scenario.device?.deviceScaleFactor ?? 1),
-  userAgent: activeSurface.userAgent || scenario.device?.userAgent || undefined,
-  storageState: scenario.auth?.storageState || undefined
-})
-
-// 每个新文档加载后自动重装 overlay（避免 navigation 清空 window.__recorder）
-await context.addInitScript((styles) => {
-  if (window.__recorderInstalled) return
-  window.__recorderInstalled = true
-
-  const ensureStyle = () => {
-    if (document.getElementById("__recorder-styles")) return
-    const head = document.head || document.documentElement
-    if (!head) return
-    const style = document.createElement("style")
-    style.id = "__recorder-styles"
-    style.textContent = styles
-    head.appendChild(style)
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", ensureStyle, { once: true })
-  } else {
-    ensureStyle()
-  }
-
-  window.__recorder = {
-    clearHighlight() {
-      document.querySelectorAll("[data-recorder-highlight]").forEach((node) => node.remove())
-    },
-    clearCaption() {
-      document.querySelectorAll("[data-recorder-caption]").forEach((node) => {
-        node.dataset.visible = "false"
-        window.setTimeout(() => node.remove(), 120)
-      })
-    },
-    clearChapter() {
-      document.querySelectorAll("[data-recorder-chapter]").forEach((node) => {
-        node.dataset.visible = "false"
-        window.setTimeout(() => node.remove(), 120)
-      })
-    },
-    showChapter(title, body) {
-      ensureStyle()
-      this.clearChapter()
-      const node = document.createElement("div")
-      node.setAttribute("data-recorder-chapter", "true")
-      node.dataset.visible = "false"
-      const strong = document.createElement("strong")
-      strong.textContent = title || ""
-      const span = document.createElement("span")
-      span.textContent = body || ""
-      if (strong.textContent) node.appendChild(strong)
-      if (span.textContent) node.appendChild(span)
-      if (node.childNodes.length === 0) return
-      document.body.appendChild(node)
-      void node.offsetHeight
-      node.dataset.visible = "true"
-    },
-    showCaption(title, body) {
-      ensureStyle()
-      this.clearCaption()
-      const node = document.createElement("div")
-      node.setAttribute("data-recorder-caption", "true")
-      node.dataset.visible = "false"
-      const strong = document.createElement("strong")
-      strong.textContent = title || ""
-      const span = document.createElement("span")
-      span.textContent = body || ""
-      if (strong.textContent) node.appendChild(strong)
-      if (span.textContent) node.appendChild(span)
-      if (node.childNodes.length === 0) return
-      document.body.appendChild(node)
-      void node.offsetHeight
-      node.dataset.visible = "true"
-    },
-    showHighlight(rect) {
-      ensureStyle()
-      this.clearHighlight()
-      const node = document.createElement("div")
-      node.setAttribute("data-recorder-highlight", "true")
-      node.style.left = Math.max(0, rect.left - 4) + "px"
-      node.style.top = Math.max(0, rect.top - 4) + "px"
-      node.style.width = (rect.width + 8) + "px"
-      node.style.height = (rect.height + 8) + "px"
-      document.body.appendChild(node)
-    }
-  }
-}, RECORDER_STYLES)
-
-const page = await context.newPage()
-const videoT0 = performance.now()
-const elapsed = () => Math.max(0, Math.round(performance.now() - videoT0))
-
-page.on("console", (message) => {
-  if (["error", "warning"].includes(message.type())) {
-    report.consoleMessages.push({
-      type: message.type(),
-      text: message.text(),
-      location: message.location()
-    })
-  }
-})
-
-page.on("pageerror", (error) => {
-  report.pageErrors.push(String(error?.stack || error?.message || error))
-})
-
-page.on("response", async (response) => {
-  const status = response.status()
-  if (status >= 400) {
-    report.responseErrors.push({
-      status,
-      url: response.url(),
-      method: response.request().method()
-    })
-  }
-})
-
-async function clearHighlight() {
-  await page.evaluate(() => window.__recorder?.clearHighlight?.()).catch(() => {})
-  await page.waitForTimeout(80)
+async function buildRunner(scenarioRelativePath, scriptToRootRelative) {
+  const template = await readFile(RUNNER_TEMPLATE_PATH, "utf8")
+  return template
+    .replace("__SCRIPT_TO_ROOT_RELATIVE__", scriptToRootRelative.replace(/\\/g, "\\\\").replace(/"/g, "\\\""))
+    .replace("__SCENARIO_RELATIVE__", scenarioRelativePath.replace(/\\/g, "\\\\").replace(/"/g, "\\\""))
 }
 
-async function chapter(title, body, durationMs = 1250) {
-  if (wantsOpenCaptions && scenario.overlay?.chapterBanner) {
-    await page
-      .evaluate(
-        ({ title: chapterTitle, body: chapterBody }) =>
-          window.__recorder?.showChapter?.(chapterTitle, chapterBody),
-        { title, body }
-      )
-      .catch(() => {})
-    await waitForOverlaySettled()
+async function maybeWarnGitignore(rootDir, outRelative) {
+  const gitignorePath = path.join(rootDir, ".gitignore")
+  if (!existsSync(gitignorePath)) {
+    console.warn(
+      `[scaffold] 提醒：仓库没有 .gitignore，录屏产物 (${outRelative}/*.mp4、*.webm、frame-review/、cover-candidates/) 体积可能很大，建议显式忽略以免误 commit。`
+    )
+    return
   }
-  const startMs = elapsed()
-  await page.waitForTimeout(durationMs)
-  const endMs = elapsed()
-  if (wantsOpenCaptions && scenario.overlay?.chapterBanner) {
-    await page.evaluate(() => window.__recorder?.clearChapter?.()).catch(() => {})
-    await waitForOverlaySettled()
-  }
-  if (wantsAnyCaptions) {
-    report.captions.push({
-      title,
-      body,
-      kind: "chapter",
-      durationMs: endMs - startMs,
-      startMs,
-      endMs,
-      at: new Date().toISOString()
-    })
-  }
-}
-
-async function caption(title, body, durationMs = 2800) {
-  if (wantsOpenCaptions) {
-    await page
-      .evaluate(
-        ({ title: captionTitle, body: captionBody }) =>
-          window.__recorder?.showCaption?.(captionTitle, captionBody),
-        { title, body }
-      )
-      .catch(() => {})
-    await waitForOverlaySettled()
-  }
-  const startMs = elapsed()
-  await page.waitForTimeout(durationMs)
-  const endMs = elapsed()
-  if (wantsOpenCaptions) {
-    await page.evaluate(() => window.__recorder?.clearCaption?.()).catch(() => {})
-    await waitForOverlaySettled()
-  }
-  if (wantsAnyCaptions) {
-    report.captions.push({
-      title,
-      body,
-      durationMs: endMs - startMs,
-      startMs,
-      endMs,
-      at: new Date().toISOString()
-    })
-  }
-}
-
-async function isServing(url) {
   try {
-    const response = await fetch(url, { method: "GET" })
-    return response.status < 500
+    const text = await readFile(gitignorePath, "utf8")
+    if (!text.split(/\r?\n/).some((line) => line.trim() === outRelative || line.trim() === `${outRelative}/` || line.includes("*.mp4"))) {
+      console.warn(
+        `[scaffold] 提醒：.gitignore 没有忽略 ${outRelative} 或 *.mp4。录屏产物可能很大，建议手动添加：\n  ${outRelative}/*.mp4\n  ${outRelative}/*.webm\n  ${outRelative}/*-frame-review/\n  ${outRelative}/*-cover-candidates/`
+      )
+    }
   } catch {
-    return false
+    // ignore
   }
-}
-
-async function waitForServer(url, timeoutMs = 120_000) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await isServing(url)) return
-    await new Promise((resolve) => setTimeout(resolve, 500))
-  }
-  throw new Error(\`Timed out waiting for dev server: \${url}\`)
-}
-
-async function ensureServer() {
-  const healthUrl = new URL(scenario.server?.healthPath || "/", scenario.baseUrl).toString()
-  if (await isServing(healthUrl)) return
-  if (!scenario.server?.command) {
-    throw new Error(\`No server is listening at \${healthUrl}, and scenario.server.command is empty\`)
-  }
-  const child = spawn(scenario.server.command, {
-    cwd: projectRoot,
-    shell: true,
-    env: {
-      ...process.env,
-      NO_PROXY: "127.0.0.1,localhost",
-      no_proxy: "127.0.0.1,localhost"
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  })
-  startedServer = child
-  child.stdout.on("data", (chunk) => process.stdout.write(\`[demo-server] \${chunk}\`))
-  child.stderr.on("data", (chunk) => process.stderr.write(\`[demo-server] \${chunk}\`))
-  await waitForServer(healthUrl)
-}
-
-async function stopServer() {
-  if (!startedServer) return
-  startedServer.kill("SIGTERM")
-  await new Promise((resolve) => setTimeout(resolve, 650))
-  if (!startedServer.killed) startedServer.kill("SIGKILL")
-  startedServer = null
-}
-
-async function waitForNextPaint() {
-  await page
-    .evaluate(
-      () =>
-        new Promise((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(resolve))
-        })
-    )
-    .catch(() => {})
-}
-
-async function waitForOverlaySettled() {
-  await waitForNextPaint()
-  await page.waitForTimeout(overlaySettleMs)
-}
-
-function formatVttTime(ms) {
-  const hours = Math.floor(ms / 3_600_000)
-  const minutes = Math.floor((ms % 3_600_000) / 60_000)
-  const seconds = Math.floor((ms % 60_000) / 1000)
-  const millis = Math.floor(ms % 1000)
-  return \`\${String(hours).padStart(2, "0")}:\${String(minutes).padStart(2, "0")}:\${String(seconds).padStart(2, "0")}.\${String(millis).padStart(3, "0")}\`
-}
-
-function buildVtt(captions) {
-  const cues = captions.map((item, index) => {
-    const text = [item.title, item.body].filter(Boolean).join("\\n")
-    return \`\${index + 1}\\n\${formatVttTime(item.startMs || 0)} --> \${formatVttTime(item.endMs || 0)}\\n\${text}\`
-  })
-  return \`WEBVTT\\n\\n\${cues.join("\\n\\n")}\\n\`
-}
-
-async function highlight(selector, holdMs = 300) {
-  const locator = page.locator(selector).first()
-  await locator.waitFor({ state: "visible", timeout: 10_000 })
-  const box = await locator.boundingBox()
-  if (box) {
-    await page.evaluate((rect) => window.__recorder?.showHighlight?.(rect), box)
-    await page.waitForTimeout(holdMs)
-  }
-  return locator
-}
-
-async function measureStep(label) {
-  const metrics = await page.evaluate(() => ({
-    url: window.location.pathname + window.location.search,
-    highlightVisible: document.querySelectorAll("[data-recorder-highlight]").length > 0,
-    overflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)
-  }))
-  report.steps.push({ label, ...metrics, atMs: elapsed() })
-}
-
-async function waitForApi(waitForApi, action) {
-  if (!waitForApi) {
-    await action()
-    return null
-  }
-
-  const responsePromise = page.waitForResponse((response) => {
-    const request = response.request()
-    const matchesMethod = !waitForApi.method || request.method() === waitForApi.method
-    const matchesPath = !waitForApi.path || response.url().includes(waitForApi.path)
-    const matchesOk = waitForApi.ok == null || response.ok() === Boolean(waitForApi.ok)
-    return matchesMethod && matchesPath && matchesOk
-  }, { timeout: waitForApi.timeoutMs || 20_000 })
-
-  await action()
-  return responsePromise
-}
-
-async function runStep(flow, step, index) {
-  const label = step.label || \`\${flow.id}-\${index + 1}-\${step.type}\`
-
-  if (step.caption) {
-    await caption(
-      step.caption.title || flow.caption?.title || label,
-      step.caption.body || step.caption,
-      step.caption.durationMs || 2200
-    )
-  }
-
-  if (step.type === "goto") {
-    await clearHighlight()
-    await page.goto(new URL(step.url || step.route || flow.route || "/", scenario.baseUrl).toString(), {
-      waitUntil: "networkidle"
-    })
-  } else if (step.type === "chapter") {
-    await chapter(step.title || flow.caption?.title || label, step.body || flow.caption?.body || "", step.durationMs || 1250)
-  } else if (step.type === "caption") {
-    await caption(step.title || flow.caption?.title || label, step.body || flow.caption?.body || "", step.durationMs || 3000)
-  } else if (step.type === "click") {
-    const locator = await highlight(step.selector, step.highlightMs || 300)
-    await clearHighlight()
-    await waitForApi(step.waitForApi, async () => {
-      await locator.click({ delay: step.delayMs || 40 })
-    })
-    if (step.waitForUrl) {
-      await page.waitForURL(new RegExp(step.waitForUrl), { timeout: step.timeoutMs || 20_000 })
-    }
-  } else if (step.type === "fill") {
-    const locator = await highlight(step.selector, step.highlightMs || 300)
-    await clearHighlight()
-    await locator.fill(step.value || "")
-  } else if (step.type === "select") {
-    const locator = await highlight(step.selector, step.highlightMs || 300)
-    await clearHighlight()
-    if (step.optionLabel) {
-      await locator.selectOption({ label: step.optionLabel })
-    } else {
-      await locator.selectOption(step.value)
-    }
-  } else if (step.type === "scroll") {
-    await clearHighlight()
-    await page.mouse.wheel(step.x || 0, step.y || 600)
-    await page.waitForTimeout(step.durationMs || 800)
-  } else if (step.type === "wait") {
-    await clearHighlight()
-    if (step.selector) {
-      await page.locator(step.selector).first().waitFor({ state: step.state || "visible", timeout: step.timeoutMs || 10_000 })
-    } else if (step.url) {
-      await page.waitForURL(new RegExp(step.url), { timeout: step.timeoutMs || 10_000 })
-    } else {
-      await page.waitForTimeout(step.durationMs || 1000)
-    }
-  } else if (step.type === "screenshot") {
-    await clearHighlight()
-    await page.screenshot({ path: path.join(outputDir, \`\${scenario.name}-\${step.name || label}.png\`), fullPage: true })
-  } else if (step.type === "assert") {
-    await clearHighlight()
-    if (step.text) {
-      await page.getByText(step.text, { exact: Boolean(step.exact) }).first().waitFor({ timeout: step.timeoutMs || 10_000 })
-    }
-  } else {
-    throw new Error(\`未知 step 类型：\${step.type}\`)
-  }
-
-  await clearHighlight()
-  await measureStep(label)
-}
-
-function runFfmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] })
-    let stderr = ""
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString()
-    })
-    child.on("error", reject)
-    child.on("close", (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(\`ffmpeg failed (status=\${code})\\n\${stderr.slice(-2000)}\`))
-    })
-  })
-}
-
-async function convertToMp4(webmPath, mp4Path) {
-  await runFfmpeg([
-    "-y",
-    "-i",
-    webmPath,
-    "-c:v",
-    "libx264",
-    "-pix_fmt",
-    "yuv420p",
-    "-crf",
-    "20",
-    "-preset",
-    "veryfast",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "160k",
-    mp4Path
-  ])
-}
-
-try {
-  await ensureServer()
-  await page.goto(scenario.baseUrl, { waitUntil: "domcontentloaded" })
-
-  for (const flow of scenario.flows || []) {
-    await page.goto(new URL(flow.route || "/", scenario.baseUrl).toString(), { waitUntil: "networkidle" })
-    if (scenario.overlay?.chapterBanner) {
-      await chapter(flow.caption?.title || flow.id, flow.caption?.body || "", flow.chapterDurationMs || 1250)
-    } else {
-      await caption(flow.caption?.title || flow.id, flow.caption?.body || "", flow.caption?.durationMs || 3000)
-    }
-
-    for (const [index, step] of (flow.steps || []).entries()) {
-      await runStep(flow, step, index)
-    }
-
-    for (const assertion of flow.assertions || []) {
-      if (assertion.type === "text") {
-        await page.getByText(assertion.value, { exact: Boolean(assertion.exact) }).first().waitFor({ timeout: 10_000 })
-      }
-    }
-  }
-
-  await clearHighlight()
-  await page.screenshot({ path: path.join(outputDir, \`\${scenario.name}-final.png\`), fullPage: true })
-} finally {
-  const video = page.video()
-  await context.close()
-  let webmPath = null
-  if (video) {
-    webmPath = await video.path().catch(() => null)
-  }
-  await browser.close()
-
-  report.webm = webmPath
-  if (webmPath && scenario.outputs?.mp4 !== false) {
-    const mp4Path = path.join(outputDir, \`\${scenario.name}.mp4\`)
-    try {
-      await convertToMp4(webmPath, mp4Path)
-      report.mp4 = mp4Path
-      report.video = mp4Path
-    } catch (error) {
-      console.warn(\`[recorder] mp4 转码失败，保留 webm：\${error.message}\`)
-      report.video = webmPath
-    }
-  } else {
-    report.video = webmPath
-  }
-
-  if (scenario.outputs?.sidecarSubtitles && report.captions.length > 0) {
-    await writeFile(path.join(outputDir, \`\${scenario.name}.vtt\`), buildVtt(report.captions))
-  }
-  await writeFile(path.join(outputDir, \`\${scenario.name}-report.json\`), JSON.stringify(report, null, 2))
-  console.log(\`[recorder] 已生成 report：\${path.join(outputDir, scenario.name + "-report.json")}\`)
-  if (report.mp4) console.log(\`[recorder] 已生成 MP4：\${report.mp4}\`)
-  if (report.webm) console.log(\`[recorder] 原始 WebM：\${report.webm}\`)
-  await stopServer()
-}
-`
 }
 
 const args = parseArgs(process.argv.slice(2))
 const root = path.resolve(args.root)
+const detection = await detectProject(root)
+
+if (detection.warnings.length > 0) {
+  for (const warning of detection.warnings) {
+    console.warn(`[scaffold] ${warning}`)
+  }
+}
+
+// 用 detection 推断的 baseUrl 填充用户未提供的值
+if (!args.baseUrl) {
+  args.baseUrl = detection.baseUrl || "http://localhost:3000"
+  if (detection.baseUrl) {
+    console.log(`[scaffold] 已根据项目自动检测 baseUrl：${args.baseUrl}（如需要请改用 --base-url）`)
+  } else {
+    console.warn(
+      `[scaffold] 未能从项目自动检测 baseUrl，使用回退值 ${args.baseUrl}。请用 --base-url 覆盖或编辑 scenario.json 中的 baseUrl 字段。`
+    )
+  }
+}
+
 const outputDir = path.resolve(root, args.out)
 const scriptDir = path.resolve(root, "scripts/recordings")
 const scenarioPath = path.join(outputDir, `${args.name}.scenario.json`)
@@ -1119,10 +834,10 @@ const scenarioRelativePath = path.relative(root, scenarioPath)
 const scriptRelativePath = path.relative(root, scriptPath)
 const guideRelativePath = path.relative(root, guidePath)
 const scriptToRootRelative = path.relative(path.dirname(scriptPath), root) || "."
-const scenario = buildScenario(args)
+const scenario = buildScenario(args, detection)
 
 await writeNew(scenarioPath, `${JSON.stringify(scenario, null, 2)}\n`, args.force)
-await writeNew(scriptPath, buildRunner(scenarioRelativePath, scriptToRootRelative), args.force)
+await writeNew(scriptPath, await buildRunner(scenarioRelativePath, scriptToRootRelative), args.force)
 
 const guideExists = await exists(guidePath)
 let guideAction = "skipped"
@@ -1134,6 +849,13 @@ if (!guideExists) {
   guideAction = "overwritten"
 }
 
+await maybeWarnGitignore(root, args.out)
+
 console.log(`已生成录屏场景：${scenarioRelativePath}`)
 console.log(`已生成录屏脚本：${scriptRelativePath}`)
 console.log(`录屏指南 (${guideAction})：${guideRelativePath}`)
+if (detection.kind === "ios" || detection.kind === "android") {
+  console.warn(
+    "[scaffold] generated runner 在原生 App 项目下不会工作；scenario 中的 server/auth/healthPath 字段对你无意义，请删除或忽略，转走外部录屏接入工作流（见 SKILL.md）。"
+  )
+}
