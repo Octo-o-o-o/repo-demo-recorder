@@ -1,0 +1,198 @@
+# 场景配置结构
+
+场景文件建议保存为 `docs/recordings/<name>.scenario.json` 或 `docs/recordings/<name>.scenario.yaml`。
+
+## 顶层字段
+
+```json
+{
+  "name": "add-data-flow",
+  "title": "新增数据流程录屏",
+  "baseUrl": "http://127.0.0.1:3210",
+  "language": "zh-CN",
+  "subtitles": "open",
+  "audience": "customer",
+  "polish": "formal-delivery",
+  "narrative": {
+    "angle": "customer-value",
+    "avoidVisibleTerms": ["mock", "fixture", "renderer-only", "内部边界"],
+    "defaultCaptionPattern": "客户价值 + 可控机制"
+  },
+  "narration": {
+    "enabled": false,
+    "engine": "edge-tts",
+    "language": "zh-CN",
+    "voice": "zh-CN-YunyangNeural",
+    "rate": 180,
+    "mix": "replace",
+    "timing": "auto",
+    "padMode": "freeze",
+    "padBufferMs": 300,
+    "maxPaddingMs": 60000
+  },
+  "style": "qa-proof",
+  "viewport": { "width": 1440, "height": 960 },
+  "overlay": {
+    "animation": "safe-opacity",
+    "settleMs": 160,
+    "chapterBanner": true,
+    "chapterPosition": "top-center",
+    "captionPosition": "bottom-center"
+  },
+  "segmentation": {
+    "enabled": true,
+    "reviewEachSegment": true,
+    "mergeAfterPass": true,
+    "rerecordOnFailure": true
+  },
+  "auth": {
+    "mode": "dev-login",
+    "endpoint": "/api/auth/dev-login",
+    "payload": { "email": "demo@example.com", "role": "ADMIN" }
+  },
+  "data": {
+    "strategy": "ui-write",
+    "backupCommand": "npm run db:backup",
+    "seedCommand": null,
+    "demoPrefix": "演示",
+    "cleanup": false
+  },
+  "server": {
+    "command": "npm run dev",
+    "port": 3210,
+    "healthPath": "/login"
+  },
+  "outputs": {
+    "dir": "docs/recordings",
+    "mp4": true,
+    "webm": true,
+    "report": true,
+    "finalScreenshot": true,
+    "sidecarSubtitles": false,
+    "narratedMp4": false,
+    "narrationTranscript": false,
+    "mediaReport": false
+  },
+  "review": {
+    "writeFrameReview": true,
+    "frameReviewDir": "docs/recordings/add-data-flow-frame-review",
+    "sampleCueKinds": ["chapter", "caption"],
+    "sampleOffsetsMs": [-220, -80, 80, 220]
+  },
+  "qualityGates": {
+    "maxOverflow": 0,
+    "allowPageErrors": false,
+    "allowedResponseErrors": ["/api/settings/html-style-templates"],
+    "requireApiSuccess": true,
+    "requireDbAssertions": true,
+    "media": {
+      "requireAudio": false,
+      "minDurationRatio": 0.98,
+      "minAudioMaxDb": -50,
+      "expectWidth": 1440,
+      "expectHeight": 960
+    }
+  },
+  "flows": []
+}
+```
+
+## Audience / Narrative 字段
+
+- `audience`: `customer`、`internal-review`、`qa-proof`、`training`、`release-pr`。
+- `polish`: `quick-proof`、`formal-delivery`、`customer-ready`。
+- `narrative.angle`: `customer-value` 时，caption 和 narration 应先说明客户收益，再说明机制；内部实现词放进 report/guide，不进入画面。
+- `narrative.avoidVisibleTerms`: 用于人工或脚本 review，避免客户可见字幕/旁白出现内部词。
+
+## Overlay 字段
+
+- `animation=safe-opacity`：固定位置，只做短时透明度变化；显示稳定后再记录 caption 时间。正式交付默认。
+- `animation=instant`：直接显示/隐藏，适合 QA 证据。
+- `animation=motion`：允许位移动画，仅用于草稿；客户可发版不要使用。
+- `chapterBanner=true`：模块切换时增加更显眼的章节横幅。横幅文案应表达价值而不是实现细节。
+
+## Segmentation 字段
+
+长 demo 推荐启用分段录制：
+
+- 每段输出独立 MP4/WebM/VTT/report/review。
+- 每段通过后再继续下一段。
+- 某段失败时只重录该段。
+- 全部通过后再合并，合并后重新做媒体校验和抽帧复查。
+
+## Flow 字段
+
+```json
+{
+  "id": "create-source",
+  "route": "/sources/new/manual",
+  "caption": {
+    "title": "新增数据源",
+    "body": "配置招投标监控平台、关键词、地区和频率。",
+    "durationMs": 3600,
+    "narration": "这里配置招投标监控平台、关键词、地区和频率，后续系统会按这些条件自动归集公告。"
+  },
+  "steps": [
+    {
+      "type": "fill",
+      "selector": "#sourceName",
+      "value": "演示·政务云招标监控",
+      "caption": "使用面向业务的名称，方便团队在列表中识别。"
+    },
+    {
+      "type": "click",
+      "selector": "button[type=submit]",
+      "waitForApi": { "method": "POST", "path": "/api/sources", "ok": true },
+      "waitForUrl": "/sources"
+    }
+  ],
+  "assertions": [
+    { "type": "text", "value": "演示·政务云招标监控" },
+    { "type": "db", "model": "source", "where": { "sourceName": "$demo.sourceName" } }
+  ]
+}
+```
+
+## Step 类型
+
+- `goto`：导航。
+- `caption`：只显示字幕并停留。
+- `click`：高亮、清除高亮、点击。
+- `fill`：高亮、清除高亮、输入。
+- `select`：Radix/native select。
+- `scroll`：滚动。
+- `wait`：等待固定时间或 selector/API/URL。
+- `screenshot`：关键帧截图。
+- `assert`：运行页面或数据断言。
+
+## Narration 字段
+
+caption 或 step 可以加 `narration` 覆盖解说文案。没有该字段时，TTS 脚本默认使用 `title + body`。需要跳过某条字幕时设置 `"narration": false`。
+
+## Media report 字段
+
+带 TTS 或正式交付录屏应输出 media report，并至少包含：
+
+```json
+{
+  "source": { "durationSeconds": 72.4, "video": { "width": 1440, "height": 900 } },
+  "output": {
+    "durationSeconds": 72.4,
+    "audioStreams": 1,
+    "audioVolume": { "meanVolumeDb": -24.1, "maxVolumeDb": -5.8 }
+  },
+  "durationRatio": 1
+}
+```
+
+媒体校验失败时不要只重跑合成命令；先检查 report captions 是否过密、TTS voice 是否可用、音频是否被错误 mute、输出是否被 `-t` 截短，以及 narration-report 中的 `timeline.totalPaddingMs` 是否触发了冻结帧扩展（如果是，源视频时长 ≠ 输出时长，校验时要用 `expectedDurationMs`）。TTS 脚本生成的 `cues[].endMs` 应覆盖该段真实语音时长与 `padBufferMs`，不能停留在原始字幕的短时长。
+
+## 断言要求
+
+写入型步骤必须至少满足一个：
+
+- `waitForApi.ok=true`
+- `waitForUrl`
+- `db` 断言
+
+否则不允许把录屏标记为成功。

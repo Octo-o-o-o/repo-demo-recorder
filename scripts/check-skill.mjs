@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
+
+const __filename = fileURLToPath(import.meta.url)
+const repoRoot = path.resolve(path.dirname(__filename), "..")
+
+function fail(message) {
+  console.error(`[check] ${message}`)
+  process.exitCode = 1
+}
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    ...options
+  })
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed\n${result.stderr || result.stdout}`)
+  }
+  return result
+}
+
+async function checkRequiredFiles() {
+  for (const filePath of [
+    "SKILL.md",
+    "agents/openai.yaml",
+    "references/options.md",
+    "references/quality-gates.md",
+    "references/scenario-schema.md",
+    "scripts/scaffold-repo-demo.mjs",
+    "scripts/add-tts-narration.mjs",
+    "scripts/validate-recording-report.mjs",
+    "scripts/install-skill.mjs"
+  ]) {
+    if (!existsSync(path.join(repoRoot, filePath))) fail(`Missing required file: ${filePath}`)
+  }
+}
+
+async function checkSkillFrontmatter() {
+  const text = await readFile(path.join(repoRoot, "SKILL.md"), "utf8")
+  if (!text.startsWith("---\n")) fail("SKILL.md must start with YAML frontmatter")
+  if (!/^name:\s*repo-demo-recorder/m.test(text)) fail("SKILL.md frontmatter must include name: repo-demo-recorder")
+  if (!/^description:\s*.+/m.test(text)) fail("SKILL.md frontmatter must include description")
+}
+
+async function checkScriptSyntax() {
+  for (const filePath of [
+    "scripts/scaffold-repo-demo.mjs",
+    "scripts/add-tts-narration.mjs",
+    "scripts/validate-recording-report.mjs",
+    "scripts/install-skill.mjs",
+    "scripts/check-skill.mjs"
+  ]) {
+    run("node", ["--check", filePath])
+  }
+}
+
+async function checkScaffoldSmoke() {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-check-"))
+  try {
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root",
+      tempRoot,
+      "--name",
+      "customer-demo",
+      "--audience",
+      "customer",
+      "--polish",
+      "customer-ready",
+      "--flows",
+      "core,mobile",
+      "--force"
+    ])
+    run("node", ["--check", path.join(tempRoot, "scripts/recordings/customer-demo.mjs")], {
+      cwd: tempRoot
+    })
+    const scenario = JSON.parse(
+      await readFile(path.join(tempRoot, "docs/recordings/customer-demo.scenario.json"), "utf8")
+    )
+    if (scenario.audience !== "customer") fail("Scaffold did not preserve audience=customer")
+    if (scenario.overlay?.animation !== "safe-opacity") fail("Scaffold did not default to safe overlay")
+    if (!scenario.review?.writeFrameReview) fail("Scaffold did not enable frame review for customer-ready")
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
+await checkRequiredFiles()
+await checkSkillFrontmatter()
+await checkScriptSyntax()
+await checkScaffoldSmoke()
+
+if (process.exitCode) {
+  process.exit(process.exitCode)
+}
+
+console.log("[check] repo-demo-recorder skill checks passed")
