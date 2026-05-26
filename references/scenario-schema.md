@@ -104,8 +104,16 @@
     "narratedMp4": false,
     "narrationTranscript": false,
     "mediaReport": false,
+    "reviewPage": true,
+    "polishedMp4": false,
+    "screenStudioHandoff": false,
     "coverImage": true,
     "coverCandidates": true
+  },
+  "postProduction": {
+    "polishPreset": "customer-desktop",
+    "screenStudioTarget": "desktop",
+    "useScreenStudioFor": []
   },
   "review": {
     "writeFrameReview": true,
@@ -182,6 +190,17 @@
 - 每段通过后再继续下一段。
 - 某段失败时只重录该段。
 - 全部通过后再合并，合并后重新做媒体校验和抽帧复查。
+
+## PostProduction 字段
+
+- `outputs.reviewPage=true`：正式交付建议生成 `<name>-review.html`，集中检查视频、字幕、封面、质量门禁和抽帧。
+- `outputs.polishedMp4=true`：生成基础包装版 MP4。适合统一背景、尺寸、padding、社媒/客户导出 preset。
+- `outputs.screenStudioHandoff=true`：生成 Screen Studio 交接包，不代表最终视频由 skill 自动美化。
+- `postProduction.polishPreset`: `customer-desktop`、`customer-mobile`、`social-mobile`、`qa-proof`、`readme-gif`。
+- `postProduction.screenStudioTarget`: `desktop`、`mobile`、`social`、`training`，用于 handoff 文档里的推荐设置。
+- `postProduction.useScreenStudioFor`: 说明哪些效果交给 Screen Studio，例如 manual zoom、cursor smoothing、device frame、timeline edits。
+
+推荐边界：skill 做可复现录制、审片、字幕、封面、基础包装；Screen Studio 做自然缩放、光标平滑、motion blur、设备模型、摄像头布局、音乐和主观剪辑。
 
 ## Cover 字段
 

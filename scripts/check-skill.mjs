@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -38,6 +38,9 @@ async function checkRequiredFiles() {
     "scripts/scaffold-repo-demo.mjs",
     "scripts/add-tts-narration.mjs",
     "scripts/generate-video-cover.mjs",
+    "scripts/generate-review-page.mjs",
+    "scripts/polish-video.mjs",
+    "scripts/prepare-screen-studio-handoff.mjs",
     "scripts/validate-recording-report.mjs",
     "scripts/install-skill.mjs"
   ]) {
@@ -57,6 +60,9 @@ async function checkScriptSyntax() {
     "scripts/scaffold-repo-demo.mjs",
     "scripts/add-tts-narration.mjs",
     "scripts/generate-video-cover.mjs",
+    "scripts/generate-review-page.mjs",
+    "scripts/polish-video.mjs",
+    "scripts/prepare-screen-studio-handoff.mjs",
     "scripts/validate-recording-report.mjs",
     "scripts/install-skill.mjs",
     "scripts/check-skill.mjs"
@@ -138,10 +144,66 @@ async function checkScaffoldSmoke() {
   }
 }
 
+async function checkReviewAndHandoffSmoke() {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-review-"))
+  try {
+    const reportPath = path.join(tempRoot, "demo-report.json")
+    const mediaReportPath = path.join(tempRoot, "demo-media-report.json")
+    await mkdir(path.join(tempRoot, "frame-review"), { recursive: true })
+    await mkdir(path.join(tempRoot, "cover-candidates"), { recursive: true })
+    await writeFile(
+      reportPath,
+      `${JSON.stringify(
+        {
+          scenario: "demo",
+          surface: "desktop",
+          language: "zh-CN",
+          captions: [{ title: "首页", body: "客户从这里开始处理工作。", startMs: 0, endMs: 1200 }],
+          steps: [{ label: "start", highlightVisible: false, overflow: 0 }],
+          consoleMessages: [],
+          pageErrors: [],
+          responseErrors: []
+        },
+        null,
+        2
+      )}\n`
+    )
+    await writeFile(
+      mediaReportPath,
+      `${JSON.stringify({ scenario: "demo", failures: 0, media: {} }, null, 2)}\n`
+    )
+    run("node", [
+      "scripts/generate-review-page.mjs",
+      "--report",
+      reportPath,
+      "--media-report",
+      mediaReportPath,
+      "--out",
+      path.join(tempRoot, "review.html")
+    ])
+    if (!existsSync(path.join(tempRoot, "review.html"))) fail("Review smoke did not create review.html")
+    run("node", [
+      "scripts/prepare-screen-studio-handoff.mjs",
+      "--out",
+      path.join(tempRoot, "handoff"),
+      "--report",
+      reportPath,
+      "--target",
+      "desktop"
+    ])
+    if (!existsSync(path.join(tempRoot, "handoff/SCREEN_STUDIO_HANDOFF.md"))) {
+      fail("Screen Studio handoff smoke did not create markdown")
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
 await checkRequiredFiles()
 await checkSkillFrontmatter()
 await checkScriptSyntax()
 await checkScaffoldSmoke()
+await checkReviewAndHandoffSmoke()
 
 if (process.exitCode) {
   process.exit(process.exitCode)

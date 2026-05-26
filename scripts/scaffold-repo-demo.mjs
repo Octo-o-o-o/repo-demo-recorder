@@ -274,8 +274,19 @@ function buildScenario(args) {
       narratedMp4: false,
       narrationTranscript: false,
       mediaReport: false,
+      reviewPage: args.polish !== "quick-proof",
+      polishedMp4: args.polish === "customer-ready",
+      screenStudioHandoff: false,
       coverImage: args.polish !== "quick-proof",
       coverCandidates: args.polish !== "quick-proof"
+    },
+    postProduction: {
+      polishPreset: isPortrait ? "customer-mobile" : "customer-desktop",
+      screenStudioTarget: isPortrait ? "mobile" : "desktop",
+      useScreenStudioFor:
+        args.polish === "customer-ready"
+          ? ["manual zoom polish", "cursor smoothing", "device frame", "timeline edits"]
+          : []
     },
     review: {
       writeFrameReview: args.polish !== "quick-proof",
@@ -402,6 +413,24 @@ node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-repo
 
 \`\`\`bash
 node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --require-audio --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+\`\`\`
+
+## 审片页面
+
+\`\`\`bash
+node <skill>/scripts/generate-review-page.mjs --report ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --media-report ${args.out}/${args.name}-media-report.json --cover ${args.out}/${args.name}-cover.png --cover-candidates ${args.out}/${args.name}-cover-candidates --frame-review ${args.out}/${args.name}-frame-review --out ${args.out}/${args.name}-review.html
+\`\`\`
+
+## 基础包装导出
+
+\`\`\`bash
+node <skill>/scripts/polish-video.mjs --video ${args.out}/${args.name}-narrated.mp4 --out ${args.out}/${args.name}-polished.mp4 --preset ${scenario.postProduction.polishPreset}
+\`\`\`
+
+如果需要 Screen Studio 级别的自然缩放、光标平滑、设备框或手动时间线编辑，先生成交接包：
+
+\`\`\`bash
+node <skill>/scripts/prepare-screen-studio-handoff.mjs --out ${args.out}/${args.name}-screen-studio-handoff --target ${scenario.postProduction.screenStudioTarget} --raw-video ${args.out}/${args.name}.mp4 --narrated-video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --scenario ${args.out}/${args.name}.scenario.json --vtt ${args.out}/${args.name}-narrated-narration.vtt --cover ${args.out}/${args.name}-cover.png --frame-review ${args.out}/${args.name}-frame-review --cover-candidates ${args.out}/${args.name}-cover-candidates
 \`\`\`
 
 ## 字幕原则

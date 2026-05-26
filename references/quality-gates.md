@@ -18,6 +18,7 @@
 - 手机端或多端中的手机版必须输出竖屏视频，默认校验 `1080x1920`，且 `height > width`。
 - 解说稿必须随产物落地，不能只有合成后的音轨。
 - 正式交付必须生成标准封面 PNG：桌面端 16:9，手机端 9:16；客户可发版必须生成候选封面 contact sheet，并记录最终封面选择理由。
+- 正式交付建议生成 review HTML，把最终视频、字幕时间线、封面候选、frame review、media report 放在同一页；逐段录制时每段都应有对应审片入口。
 - 至少抽 1-3 张关键帧做人眼检查，确认字幕没有遮挡主要控件、表单输入、报告正文或导出结果。
 - 手机端关键帧必须额外检查字幕没有遮挡底部导航、输入框、键盘触发区域和主 CTA；封面不能遮住底部导航或关键按钮。
 - 正式交付或客户可发版必须围绕 caption/chapter 的 `startMs/endMs` 抽取过渡帧，确认没有半截遮罩、位移露出、遮挡关键控件、字体溢出或横幅跳动。
@@ -90,6 +91,38 @@
 4. 桌面左侧放产品名和演示主题，右侧放真实 UI 截图窗口；手机顶部放标题，中部放手机 UI，底部放价值短句。
 5. 背景使用同一抽帧的模糊暗化版本，保证文字对比度。
 6. 记录最终选择理由，便于后续重录复用。
+
+### 审片成本太高
+
+如果每次 review 都要分别打开视频、report、封面、frame review 和 media report，用户会漏看问题。正式交付应生成 review HTML：
+
+```bash
+node <skill>/scripts/generate-review-page.mjs \
+  --report docs/recordings/demo-report.json \
+  --video docs/recordings/demo-narrated.mp4 \
+  --media-report docs/recordings/demo-media-report.json \
+  --cover docs/recordings/demo-cover.png \
+  --cover-candidates docs/recordings/demo-cover-candidates \
+  --frame-review docs/recordings/demo-frame-review \
+  --out docs/recordings/demo-review.html
+```
+
+### 把 skill 当成专业剪辑软件
+
+skill 可以稳定完成基础包装、导出 preset 和质量门禁，但不应承担复杂 timeline 编辑。需要自然 zoom、cursor smoothing、motion blur、设备模型、摄像头布局或手动剪辑时，生成 Screen Studio handoff：
+
+```bash
+node <skill>/scripts/prepare-screen-studio-handoff.mjs \
+  --out docs/recordings/demo-screen-studio-handoff \
+  --target desktop \
+  --raw-video docs/recordings/demo.mp4 \
+  --narrated-video docs/recordings/demo-narrated.mp4 \
+  --report docs/recordings/demo-report.json \
+  --vtt docs/recordings/demo-narrated-narration.vtt \
+  --cover docs/recordings/demo-cover.png
+```
+
+Screen Studio 导出后仍应回到本 skill 跑 `validate-recording-report` 的媒体级校验；如果 Screen Studio 重新生成字幕，不要同时保留 open captions 和第二套字幕。
 
 ### 手机视频被导出成横屏
 

@@ -110,6 +110,14 @@
 - `frame-sample`：抽取关键帧做人眼检查，确认字幕不遮挡主 CTA、报告正文和表单输入。
 - `sidecar-proof`：解说稿 `.vtt`、narration report、media report 必须随视频一起交付。
 
+## 后期处理
+
+- `review-html`：生成本地审片页面，集中查看最终视频、字幕时间线、封面候选、frame review、media report 和 narration report。正式交付默认推荐。
+- `polish-preset`：用 `polish-video.mjs` 做保守包装或导出，适合稳定自动化。可选：`customer-desktop`、`customer-mobile`、`social-mobile`、`qa-proof`、`readme-gif`。
+- `screen-studio-handoff`：当需要专业软件处理自然 zoom、cursor smoothing、motion blur、device mockup、webcam layout 或主观剪辑时，生成 Screen Studio 交接包。skill 负责 raw/narrated video、VTT、report、cover、review 证据；Screen Studio 负责最终时间线美化。
+
+默认策略：客户可发版先生成 review HTML；如果只需要统一背景和尺寸，用 `polish-preset`；如果用户明确追求 Screen Studio 风格，使用 `screen-studio-handoff`，不要在 skill 里硬做复杂运镜。
+
 ## 业务流程覆盖
 
 - `core`：核心浏览路径、列表、详情、筛选、搜索、tab、提交。
@@ -155,6 +163,9 @@
 - `frame-review`：围绕 caption/chapter 开始和结束时间抽帧，生成 contact sheet，检查字幕遮挡和过渡瑕疵。
 - `cover`：标准封面 PNG。
 - `cover-candidates`：候选封面与 contact sheet。
+- `review-html`：本地审片页。
+- `polished-mp4`：基础包装后的最终交付 MP4。
+- `screen-studio-handoff`：给 Screen Studio 的素材包和操作说明。
 
 ## 默认推荐
 
@@ -176,6 +187,7 @@
   "highlight": { "enabled": true, "holdMs": 320, "clearBeforeAction": true },
   "overlay": { "animation": "safe-opacity", "settleMs": 160, "chapterBanner": false },
   "segmentation": "segmented",
-  "cover": { "enabled": true, "mode": "with-candidates", "width": 1280, "height": 720 }
+  "cover": { "enabled": true, "mode": "with-candidates", "width": 1280, "height": 720 },
+  "postProduction": { "reviewPage": true, "polishPreset": "customer-desktop", "screenStudioHandoff": false }
 }
 ```

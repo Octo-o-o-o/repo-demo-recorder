@@ -1,7 +1,7 @@
 {
   "name": "repo-demo-recorder-skill",
   "version": "0.1.0",
-  "description": "Codex skill for reproducible, narrated, quality-gated repository demo recordings.",
+  "description": "Codex skill for reproducible, narrated, reviewed, and quality-gated repository demo recordings.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -9,6 +9,9 @@
     "repo-demo-add-tts": "./scripts/add-tts-narration.mjs",
     "repo-demo-validate": "./scripts/validate-recording-report.mjs",
     "repo-demo-cover": "./scripts/generate-video-cover.mjs",
+    "repo-demo-review": "./scripts/generate-review-page.mjs",
+    "repo-demo-polish": "./scripts/polish-video.mjs",
+    "repo-demo-screen-studio": "./scripts/prepare-screen-studio-handoff.mjs",
     "repo-demo-install-skill": "./scripts/install-skill.mjs"
   },
   "scripts": {

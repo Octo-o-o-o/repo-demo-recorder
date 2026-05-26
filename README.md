@@ -13,6 +13,8 @@ It is designed for repository-native demo work where a video should be repeatabl
 - Generate standard video covers from real recording frames: 16:9 for desktop demos, 9:16 for mobile demos, including candidate contact sheets.
 - Validate page errors, response errors, horizontal overflow, audio presence, audio volume, video dimensions, and narration timing.
 - Generate frame-review contact sheets around caption/chapter transitions so overlays do not look half-rendered or unprofessional.
+- Generate a local review HTML page that brings together video, captions, cover candidates, frame review, and quality reports.
+- Apply conservative post-production presets, or prepare a Screen Studio handoff pack for professional zoom/cursor/timeline polish.
 
 ## Install
 
@@ -164,6 +166,41 @@ Review:
 docs/recordings/customer-demo-cover-candidates/contact-sheet.png
 ```
 
+Generate a review page:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/generate-review-page.mjs \
+  --report docs/recordings/customer-demo-report.json \
+  --video docs/recordings/customer-demo-narrated.mp4 \
+  --media-report docs/recordings/customer-demo-media-report.json \
+  --cover docs/recordings/customer-demo-cover.png \
+  --cover-candidates docs/recordings/customer-demo-cover-candidates \
+  --frame-review docs/recordings/customer-demo-frame-review \
+  --out docs/recordings/customer-demo-review.html
+```
+
+Apply a conservative customer-ready packaging preset:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/polish-video.mjs \
+  --video docs/recordings/customer-demo-narrated.mp4 \
+  --out docs/recordings/customer-demo-polished.mp4 \
+  --preset customer-desktop
+```
+
+Prepare assets for Screen Studio when the final video needs manual zooms, cursor smoothing, device frames, or timeline polish:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/prepare-screen-studio-handoff.mjs \
+  --out docs/recordings/customer-demo-screen-studio-handoff \
+  --target desktop \
+  --raw-video docs/recordings/customer-demo.mp4 \
+  --narrated-video docs/recordings/customer-demo-narrated.mp4 \
+  --report docs/recordings/customer-demo-report.json \
+  --vtt docs/recordings/customer-demo-narrated-narration.vtt \
+  --cover docs/recordings/customer-demo-cover.png
+```
+
 ## Demo Quality Defaults
 
 For customer-ready demos, the skill now defaults toward:
@@ -176,6 +213,8 @@ For customer-ready demos, the skill now defaults toward:
 - Media validation plus transition frame review.
 - A standard cover using a real product frame, readable title text, and candidate review.
 - Mobile demos use a 390x844 phone viewport, 1080x1920 portrait video, bottom safe-area captions, and a 1080x1920 cover.
+- Review HTML by default for formal delivery, so each segment can be approved or rerecorded with less back-and-forth.
+- Conservative polish presets in the skill; Screen Studio handoff for subjective editor work such as motion blur, cursor smoothing, manual zoom blending, webcam layouts, and device-frame tweaks.
 
 ## Command Reference
 
@@ -183,6 +222,9 @@ For customer-ready demos, the skill now defaults toward:
 node scripts/scaffold-repo-demo.mjs --help
 node scripts/add-tts-narration.mjs --help
 node scripts/generate-video-cover.mjs --help
+node scripts/generate-review-page.mjs --help
+node scripts/polish-video.mjs --help
+node scripts/prepare-screen-studio-handoff.mjs --help
 node scripts/validate-recording-report.mjs --help
 node scripts/install-skill.mjs --help
 node scripts/check-skill.mjs
@@ -204,6 +246,9 @@ repo-demo-recorder/
     scaffold-repo-demo.mjs
     add-tts-narration.mjs
     generate-video-cover.mjs
+    generate-review-page.mjs
+    polish-video.mjs
+    prepare-screen-studio-handoff.mjs
     validate-recording-report.mjs
     install-skill.mjs
     check-skill.mjs

@@ -39,8 +39,10 @@ description: Create verified repository-native product walkthrough recordings wi
 8. **质量门禁**：检查 API POST 成功、页面无横向溢出、`pageErrors=[]`、高亮不滞留、允许的 404 有明确 allowlist，并做媒体级校验。
 9. **生成封面**：正式交付生成 `<name>-cover.png` 和 `<name>-cover-report.json`；客户可发版先输出候选封面 contact sheet，再选择最能代表完整产品价值的帧。
 10. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
-11. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面选择、复验结果、如何重录。
-12. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
+11. **生成审片页**：正式交付默认生成 review HTML，把视频、字幕时间线、质量门禁、封面候选和过渡帧放在同一页，便于逐段判断是否重录。
+12. **基础包装或专业交接**：skill 只做稳定的背景、尺寸、padding 和导出 preset；需要自然缩放、光标平滑、设备模型、复杂时间线时，生成 Screen Studio handoff 包交给专业软件处理。
+13. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面选择、复验结果、如何重录。
+14. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
 
 ## 端类型规则
 
@@ -79,6 +81,13 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - 封面帧优先选择能代表整体工作流的入口页、Dashboard、Home 或核心结果页；手机端优先选择首屏可读、底部导航和主 CTA 不被遮挡的画面。避免选择设置页、登录页、错误态、loading、信息过密邮件页，除非视频主题就是这些内容。
 - 正式交付应生成候选封面 contact sheet，并在 guide/report 中记录最终选择理由。
 
+## 后期边界
+
+- **skill 应该做**：分段录制、mock/seed 数据、字幕/解说、封面、审片页、基础背景包装、尺寸/音量/字幕/隐私质量门禁、Screen Studio 交接包。
+- **专业软件更适合做**：自然 cursor smoothing、motion blur、复杂 zoom blending、摄像头动态布局、音乐混音、真机设备框细节、逐帧手动剪辑。
+- **可配合 Screen Studio**：先用 skill 产出干净 raw video、narrated video、VTT、report、cover 和 review page；再用 Screen Studio 做手动 zoom、cursor、device frame、background 和最终导出。不要同时保留 skill open captions 和 Screen Studio captions，避免字幕重复。
+- **避免为了设计而设计**：默认不加复杂转场、背景音乐、强运动缩放或硬裁横屏成竖屏。客户版优先清晰、稳定、可复验。
+
 ## 实现规则
 
 - 不要只交一个视频；必须交脚本和复现说明。
@@ -101,6 +110,9 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - `scripts/add-tts-narration.mjs`：从 report captions 生成 TTS 解说、VTT 解说稿，并合成带解说 MP4；支持 macOS `say` 和 `edge-tts`。
 - `scripts/generate-video-cover.mjs`：从视频抽帧生成标准封面，桌面端 16:9、手机端 9:16，可生成候选封面 contact sheet。
 - `scripts/validate-recording-report.mjs`：校验 report JSON 的高亮、溢出、page error、response allowlist，并可生成字幕/章节过渡抽帧 contact sheet。
+- `scripts/generate-review-page.mjs`：生成本地审片 HTML，集中查看视频、字幕时间线、封面候选、frame review 和质量门禁结果。
+- `scripts/polish-video.mjs`：做保守后期包装和导出 preset，包括客户桌面、客户手机、社媒竖屏、QA 证明和 README GIF。
+- `scripts/prepare-screen-studio-handoff.mjs`：打包 raw/narrated video、字幕、report、封面和说明，交给 Screen Studio 做专业时间线编辑。
 - `scripts/install-skill.mjs`：把本仓库安装到 `$CODEX_HOME/skills/repo-demo-recorder` 或 `~/.codex/skills/repo-demo-recorder`。
 - `scripts/check-skill.mjs`：开源仓库自检，校验必需文件、脚本语法和 scaffold smoke test。
 - `references/options.md`：录屏需求选项矩阵。
@@ -120,8 +132,8 @@ docs/recordings/
   <flow>-report.json
   <flow>.scenario.json
   <flow>-narrated.mp4
-  <flow>-narration.vtt
-  <flow>-narration-report.json
+  <flow>-narrated-narration.vtt
+  <flow>-narrated-narration-report.json
   <flow>-media-report.json
   <flow>-cover.png
   <flow>-cover-report.json
@@ -129,6 +141,12 @@ docs/recordings/
     contact-sheet.png
   <flow>-frame-review/
     contact-sheet.png
+  <flow>-review.html
+  <flow>-polished.mp4
+  <flow>-polish-report.json
+  <flow>-screen-studio-handoff/
+    SCREEN_STUDIO_HANDOFF.md
+    screen-studio-handoff.json
 ```
 
 ## 常用命令
@@ -140,4 +158,7 @@ node <skill>/scripts/add-tts-narration.mjs --video docs/recordings/add-data-flow
 node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-cover.png --title "Product Demo" --subtitle "Customer-ready walkthrough" --candidates-dir docs/recordings/add-data-flow-cover-candidates
 node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/mobile-demo-narrated.mp4 --report docs/recordings/mobile-demo-report.json --out docs/recordings/mobile-demo-cover.png --title "Mobile Demo" --subtitle "Mobile product walkthrough" --width 1080 --height 1920 --theme mobile --candidates-dir docs/recordings/mobile-demo-cover-candidates
 node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --source-video docs/recordings/add-data-flow.mp4 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --require-audio --expect-width 1440 --expect-height 960 --write-media-report docs/recordings/add-data-flow-media-report.json --write-frame-review docs/recordings/add-data-flow-frame-review
+node <skill>/scripts/generate-review-page.mjs --report docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --media-report docs/recordings/add-data-flow-media-report.json --cover docs/recordings/add-data-flow-cover.png --cover-candidates docs/recordings/add-data-flow-cover-candidates --frame-review docs/recordings/add-data-flow-frame-review --out docs/recordings/add-data-flow-review.html
+node <skill>/scripts/polish-video.mjs --video docs/recordings/add-data-flow-narrated.mp4 --out docs/recordings/add-data-flow-polished.mp4 --preset customer-desktop
+node <skill>/scripts/prepare-screen-studio-handoff.mjs --out docs/recordings/add-data-flow-screen-studio-handoff --target desktop --raw-video docs/recordings/add-data-flow.mp4 --narrated-video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --vtt docs/recordings/add-data-flow-narrated-narration.vtt --cover docs/recordings/add-data-flow-cover.png
 ```
