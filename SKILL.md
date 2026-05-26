@@ -21,6 +21,7 @@ description: Create verified repository-native product walkthrough recordings wi
 - **数据策略**：默认用 mock/seed，并在 DB 写入前备份。选项：只读演示、真实 UI 写入、API seed、Prisma seed、录后清理。
 - **录屏风格**：默认工程验收。选项：工程验收、销售 demo、培训 SOP、发布 PR 证明。
 - **精修级别**：默认正式交付。选项：快速证据、正式交付、客户可发版。正式交付及以上必须分段录制、逐段 review、合并后媒体校验；客户可发版还要抽帧检查字幕/横幅出现和收起的过渡帧。
+- **封面**：正式交付默认生成标准 16:9 封面。客户演示封面应使用真实录屏画面作主视觉，产品名/演示主题第一眼可见，避免用信息过密或偏单一模块的截图；先生成候选 contact sheet，确认后输出最终 cover PNG。
 - **输出**：默认 MP4 + 原始 WebM + report JSON + 指南 MD。可加 GIF、截图、字幕文件、PR/commit 摘要。
 
 更多选项见 `references/options.md`。场景文件结构见 `references/scenario-schema.md`。
@@ -35,9 +36,10 @@ description: Create verified repository-native product walkthrough recordings wi
 6. **分段录制真实流程**：操作必须像真实用户；关键页面保留自然停留时间；表单数据要业务化，不要 `test/test`。正式交付默认一段一录、一段一 review；失败或画面不专业时重录该段，不把失败片段合进最终视频。
 7. **补 TTS 解说**：对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成音频并 mux；解说补充业务价值和验收点，不逐字朗读字幕或按钮。旁白时间应从 overlay 稳定后开始。
 8. **质量门禁**：检查 API POST 成功、页面无横向溢出、`pageErrors=[]`、高亮不滞留、允许的 404 有明确 allowlist，并做媒体级校验。
-9. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
-10. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、复验结果、如何重录。
-11. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
+9. **生成封面**：正式交付生成 `<name>-cover.png` 和 `<name>-cover-report.json`；客户可发版先输出候选封面 contact sheet，再选择最能代表完整产品价值的帧。
+10. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
+11. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面选择、复验结果、如何重录。
+12. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
 
 ## 叙事规则
 
@@ -59,6 +61,15 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - 高亮只保留 200-400ms，点击/输入前清除，`finally` 再清一次。
 - 每段结束时 report 中 `highlightVisible=false`；正式交付要抽帧检查 overlay 开始/结束前后。
 
+## 封面规则
+
+- 标准封面输出为 16:9 PNG，默认 1280×720；如面向高清发布，可追加 1920×1080。
+- 封面必须来自真实录屏抽帧或产品实景，不用纯渐变、抽象插画或无法代表产品的背景。
+- 客户演示封面结构默认：左侧产品名/演示主题/价值短句，右侧真实 UI 截图窗口，背景使用同一截图的模糊暗化版本。
+- 标题在小尺寸列表页中也要可读；不要超过两行，不使用负 letter spacing，不遮挡 UI 主视觉。
+- 封面帧优先选择能代表整体工作流的入口页、Dashboard、Home 或核心结果页；避免选择设置页、登录页、错误态、loading、信息过密邮件页，除非视频主题就是这些内容。
+- 正式交付应生成候选封面 contact sheet，并在 guide/report 中记录最终选择理由。
+
 ## 实现规则
 
 - 不要只交一个视频；必须交脚本和复现说明。
@@ -79,6 +90,7 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 
 - `scripts/scaffold-repo-demo.mjs`：在目标仓库生成场景 JSON、Playwright 脚本骨架、录屏指南。
 - `scripts/add-tts-narration.mjs`：从 report captions 生成 TTS 解说、VTT 解说稿，并合成带解说 MP4；支持 macOS `say` 和 `edge-tts`。
+- `scripts/generate-video-cover.mjs`：从视频抽帧生成标准 16:9 封面，可生成候选封面 contact sheet。
 - `scripts/validate-recording-report.mjs`：校验 report JSON 的高亮、溢出、page error、response allowlist，并可生成字幕/章节过渡抽帧 contact sheet。
 - `scripts/install-skill.mjs`：把本仓库安装到 `$CODEX_HOME/skills/repo-demo-recorder` 或 `~/.codex/skills/repo-demo-recorder`。
 - `scripts/check-skill.mjs`：开源仓库自检，校验必需文件、脚本语法和 scaffold smoke test。
@@ -102,6 +114,10 @@ docs/recordings/
   <flow>-narration.vtt
   <flow>-narration-report.json
   <flow>-media-report.json
+  <flow>-cover.png
+  <flow>-cover-report.json
+  <flow>-cover-candidates/
+    contact-sheet.png
   <flow>-frame-review/
     contact-sheet.png
 ```
@@ -111,5 +127,6 @@ docs/recordings/
 ```bash
 node <skill>/scripts/scaffold-repo-demo.mjs --root . --name add-data-flow --language zh-CN --subtitles open --flows core,add-data
 node <skill>/scripts/add-tts-narration.mjs --video docs/recordings/add-data-flow.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-narrated.mp4 --language zh-CN --engine edge-tts --voice zh-CN-YunyangNeural --pad-mode freeze --pad-buffer-ms 300
+node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-cover.png --title "Product Demo" --subtitle "Customer-ready walkthrough" --candidates-dir docs/recordings/add-data-flow-cover-candidates
 node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --source-video docs/recordings/add-data-flow.mp4 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --require-audio --expect-width 1440 --expect-height 960 --write-media-report docs/recordings/add-data-flow-media-report.json --write-frame-review docs/recordings/add-data-flow-frame-review
 ```

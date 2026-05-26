@@ -8,6 +8,7 @@
     "repo-demo-scaffold": "./scripts/scaffold-repo-demo.mjs",
     "repo-demo-add-tts": "./scripts/add-tts-narration.mjs",
     "repo-demo-validate": "./scripts/validate-recording-report.mjs",
+    "repo-demo-cover": "./scripts/generate-video-cover.mjs",
     "repo-demo-install-skill": "./scripts/install-skill.mjs"
   },
   "scripts": {

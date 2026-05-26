@@ -154,6 +154,26 @@ function buildScenario(args) {
       chapterPosition: "top-center",
       captionPosition: "bottom-left"
     },
+    cover: {
+      enabled: args.polish !== "quick-proof",
+      mode: args.polish === "quick-proof" ? "standard" : "with-candidates",
+      width: 1280,
+      height: 720,
+      title: args.audience === "customer" ? "Product Demo" : `${flowLabels[args.flows[0]] || "项目演示"}`,
+      subtitle:
+        args.audience === "customer" ? "Customer-ready product walkthrough" : "Verified product walkthrough",
+      line:
+        args.audience === "customer"
+          ? "Home · Search · Automation"
+          : "Scripted recording · Captions · Quality report",
+      badge:
+        args.audience === "customer"
+          ? "CUSTOMER DEMO"
+          : args.audience === "training"
+            ? "TRAINING"
+            : "VERIFIED DEMO",
+      timestamp: "auto"
+    },
     segmentation: {
       enabled: args.polish !== "quick-proof",
       reviewEachSegment: args.polish !== "quick-proof",
@@ -187,7 +207,9 @@ function buildScenario(args) {
       sidecarSubtitles: ["sidecar", "both"].includes(args.subtitles),
       narratedMp4: false,
       narrationTranscript: false,
-      mediaReport: false
+      mediaReport: false,
+      coverImage: args.polish !== "quick-proof",
+      coverCandidates: args.polish !== "quick-proof"
     },
     review: {
       writeFrameReview: args.polish !== "quick-proof",
@@ -272,6 +294,16 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 > \`--pad-mode freeze\`（默认）会在某段 TTS 超过窗口长度时，自动在那段 cue 末尾插入冻结帧让配音读完，并把后续 cue 时间轴整体后移。生成的 narration-report 里有 \`timeline.totalPaddingMs\` 和每段的 \`paddingMs\` 可供查证。如果某段 padding 超过 \`--max-padding-ms\`（默认 60000）会 fail-fast，请缩短该段文案。
 > \`--engine edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。不能使用在线 TTS 时，可改为 \`--engine macos-say --voice Tingting\`。
 
+## 生成封面
+
+正式交付建议生成标准 16:9 封面，并先查看候选图：
+
+\`\`\`bash
+node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-cover.png --title "${args.audience === "customer" ? "Product Demo" : "Verified Demo"}" --subtitle "${args.audience === "customer" ? "Customer-ready product walkthrough" : "Verified product walkthrough"}" --candidates-dir ${args.out}/${args.name}-cover-candidates
+\`\`\`
+
+检查 \`${args.out}/${args.name}-cover-candidates/contact-sheet.png\` 后，如果自动选择的画面不够代表产品主线，使用 \`--timestamp 00:00:36\` 指定更合适的帧重新生成。
+
 ## 质量门禁
 
 \`\`\`bash
@@ -296,6 +328,7 @@ node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-repo
 - 不使用 \`translateY/translateX/scale/clip-path\` 作为出现或收起动画。
 - 字幕时间从 overlay 稳定后开始记录；收起后等待过渡结束再继续操作。
 - 正式交付检查 \`${args.out}/${args.name}-frame-review/contact-sheet.png\`，确认字幕和章节横幅没有半截遮罩或遮挡关键控件。
+- 检查 \`${args.out}/${args.name}-cover.png\`，确认产品名/演示主题清晰、真实 UI 可见、封面没有内部术语。
 `
 }
 

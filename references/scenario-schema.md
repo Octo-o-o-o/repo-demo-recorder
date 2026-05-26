@@ -39,6 +39,17 @@
     "chapterPosition": "top-center",
     "captionPosition": "bottom-center"
   },
+  "cover": {
+    "enabled": true,
+    "mode": "with-candidates",
+    "width": 1280,
+    "height": 720,
+    "title": "Product Demo",
+    "subtitle": "Customer-ready product walkthrough",
+    "line": "Home · Search · Automation",
+    "badge": "CUSTOMER DEMO",
+    "timestamp": "auto"
+  },
   "segmentation": {
     "enabled": true,
     "reviewEachSegment": true,
@@ -71,7 +82,9 @@
     "sidecarSubtitles": false,
     "narratedMp4": false,
     "narrationTranscript": false,
-    "mediaReport": false
+    "mediaReport": false,
+    "coverImage": true,
+    "coverCandidates": true
   },
   "review": {
     "writeFrameReview": true,
@@ -119,6 +132,17 @@
 - 每段通过后再继续下一段。
 - 某段失败时只重录该段。
 - 全部通过后再合并，合并后重新做媒体校验和抽帧复查。
+
+## Cover 字段
+
+- `enabled=true`：正式交付默认生成封面。
+- `mode=standard`：直接生成最终封面。
+- `mode=with-candidates`：生成候选封面 contact sheet，再输出最终封面。客户可发版推荐。
+- `width/height`：默认 1280×720，保持 16:9。
+- `timestamp=auto`：从 report 中优先选择 Home/Dashboard/工作台相关 cue；否则取视频前 22% 左右的画面。也可显式传 `00:00:36`。
+- `title/subtitle/line/badge`：客户可见文案；客户演示不要出现 mock/fixture/dev warning 等内部词。
+
+标准客户封面应该用真实录屏抽帧作为主视觉，左侧保留清晰标题，右侧展示产品 UI。不要用设置页、登录页、loading 或信息过密页面做默认封面。
 
 ## Flow 字段
 

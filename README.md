@@ -10,6 +10,7 @@ It is designed for repository-native demo work where a video should be repeatabl
 - Scaffold scenario JSON, a Playwright recorder, and a recording guide.
 - Record stable MP4/WebM walkthroughs with open captions and optional sidecar subtitles.
 - Add TTS narration with automatic freeze-frame padding when speech is longer than the original cue window.
+- Generate standard 16:9 video covers from real recording frames, including candidate contact sheets.
 - Validate page errors, response errors, horizontal overflow, audio presence, audio volume, video dimensions, and narration timing.
 - Generate frame-review contact sheets around caption/chapter transitions so overlays do not look half-rendered or unprofessional.
 
@@ -116,6 +117,24 @@ Review:
 docs/recordings/customer-demo-frame-review/contact-sheet.png
 ```
 
+Generate a standard cover:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/generate-video-cover.mjs \
+  --video docs/recordings/customer-demo-narrated.mp4 \
+  --report docs/recordings/customer-demo-report.json \
+  --out docs/recordings/customer-demo-cover.png \
+  --title "Product Demo" \
+  --subtitle "Customer-ready product walkthrough" \
+  --candidates-dir docs/recordings/customer-demo-cover-candidates
+```
+
+Review:
+
+```text
+docs/recordings/customer-demo-cover-candidates/contact-sheet.png
+```
+
 ## Demo Quality Defaults
 
 For customer-ready demos, the skill now defaults toward:
@@ -126,12 +145,14 @@ For customer-ready demos, the skill now defaults toward:
 - Caption timing that starts only after overlays have settled.
 - TTS freeze-frame padding so narration is not clipped.
 - Media validation plus transition frame review.
+- A standard 1280x720 cover using a real product frame, readable title text, and candidate review.
 
 ## Command Reference
 
 ```bash
 node scripts/scaffold-repo-demo.mjs --help
 node scripts/add-tts-narration.mjs --help
+node scripts/generate-video-cover.mjs --help
 node scripts/validate-recording-report.mjs --help
 node scripts/install-skill.mjs --help
 node scripts/check-skill.mjs
@@ -152,6 +173,7 @@ repo-demo-recorder/
   scripts/
     scaffold-repo-demo.mjs
     add-tts-narration.mjs
+    generate-video-cover.mjs
     validate-recording-report.mjs
     install-skill.mjs
     check-skill.mjs

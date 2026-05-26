@@ -41,6 +41,20 @@
 
 不推荐在录屏中使用 `translateY/translateX/scale/clip-path` 作为字幕、章节横幅或面板的出现/收起动画。浏览器录屏会采到中间帧，容易出现半截遮罩或不专业的跳动。
 
+## 封面
+
+- `none`：不生成封面。只适合临时 QA 证据。
+- `standard`：生成一张 16:9 PNG，默认 1280×720。
+- `with-candidates`：先生成 4-6 张候选封面和 contact sheet，再输出最终封面。正式交付默认。
+- `multi-size`：生成 1280×720 与 1920×1080。适合公开视频平台或销售素材库。
+
+标准客户封面建议：
+
+- 左侧：产品名/演示主题/价值短句。
+- 右侧：真实录屏抽帧作为产品窗口主视觉。
+- 背景：同一抽帧模糊暗化，保证标题可读。
+- 候选帧：优先 Home、Dashboard、核心结果页；避开登录页、设置页、loading、错误页和信息过密页面。
+
 ## 字幕语言
 
 - `zh-CN`：默认中文。
@@ -122,6 +136,8 @@
 - `srt/vtt`：外挂字幕。
 - `gif`：PR 评论或 README 轻量展示。
 - `frame-review`：围绕 caption/chapter 开始和结束时间抽帧，生成 contact sheet，检查字幕遮挡和过渡瑕疵。
+- `cover`：标准封面 PNG。
+- `cover-candidates`：候选封面与 contact sheet。
 
 ## 默认推荐
 
@@ -140,6 +156,7 @@
   "mediaValidation": { "requireAudio": false, "minDurationRatio": 0.98, "minAudioMaxDb": -50 },
   "highlight": { "enabled": true, "holdMs": 320, "clearBeforeAction": true },
   "overlay": { "animation": "safe-opacity", "settleMs": 160, "chapterBanner": false },
-  "segmentation": "segmented"
+  "segmentation": "segmented",
+  "cover": { "enabled": true, "mode": "with-candidates", "width": 1280, "height": 720 }
 }
 ```

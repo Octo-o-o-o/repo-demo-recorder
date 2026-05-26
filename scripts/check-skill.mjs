@@ -37,6 +37,7 @@ async function checkRequiredFiles() {
     "references/scenario-schema.md",
     "scripts/scaffold-repo-demo.mjs",
     "scripts/add-tts-narration.mjs",
+    "scripts/generate-video-cover.mjs",
     "scripts/validate-recording-report.mjs",
     "scripts/install-skill.mjs"
   ]) {
@@ -55,6 +56,7 @@ async function checkScriptSyntax() {
   for (const filePath of [
     "scripts/scaffold-repo-demo.mjs",
     "scripts/add-tts-narration.mjs",
+    "scripts/generate-video-cover.mjs",
     "scripts/validate-recording-report.mjs",
     "scripts/install-skill.mjs",
     "scripts/check-skill.mjs"
