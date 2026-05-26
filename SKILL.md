@@ -27,6 +27,56 @@ description: Create verified repository-native product walkthrough recordings wi
 
 更多选项见 `references/options.md`。场景文件结构见 `references/scenario-schema.md`。
 
+## 录制环境（worktree 隔离）
+
+skill 默认在目标项目里**新开一个 git worktree** 作为录制环境，所有 scaffold、runner、TTS、封面、validate 步骤都跑在 worktree 里，不污染主工作树。这样可以：
+
+- 主工作树保持当前 dirty 状态/分支，用户的 IDE/终端会话不受打扰。
+- 录屏脚本误删数据、bad seed、misconfig 都局限在 worktree 内，不需要 `git reset`。
+- 同时录多个 flow（手机 + 桌面、core + add-data）时彼此不抢端口/缓存外的文件。
+
+### 默认流程
+
+```bash
+# 0. 准备隔离 worktree（在目标项目根下跑）
+node <skill>/scripts/prepare-recording-worktree.mjs --root . --name <flow>
+# 输出最后一行是 JSON，包含 worktreePath；按提示 cd 进去
+cd <worktreePath>
+
+# 1-9. scaffold / runner / TTS / cover / validate / review 全部在 worktree 内执行
+node <skill>/scripts/scaffold-repo-demo.mjs --root . --name <flow> ...
+node scripts/recordings/<flow>.mjs
+# ... 后续命令同 references/commands.md
+
+# 10. 收尾：拷产物回主工作树并删除 worktree
+node <skill>/scripts/cleanup-recording-worktree.mjs --worktree <worktreePath>
+```
+
+prepare 默认会：
+
+- `git worktree add --detach` 创建 worktree（不污染分支命名空间）。默认路径 `<root>/.repo-demo-recorder/worktrees/<name>`，并把 `/.repo-demo-recorder/` 写入 `.git/info/exclude`，不影响主工作树 git status。
+- 软链 `node_modules` / `.env` / `.env.local` / `.env.development*` / `.env.test*` / `.env.production*` 到 worktree，避免重新安装依赖、重新填环境变量。其它构建缓存（`.next` / `.vite` / `dist`）**不**默认软链，因为主工作树并行启动会互相覆盖；如确认安全，用 `--link <relPath>` 显式追加。
+- 主工作树 dirty 时打印警告并提示：要么 `git commit` 一笔临时改动再开 worktree，要么加 `--include-uncommitted` 让 prepare 把 staged + unstaged + untracked（自动跳过默认 link 路径）搬到 worktree。
+
+cleanup 默认会：
+
+- 把 worktree 中的 `docs/recordings/` 和 `scripts/recordings/` 拷回主工作树（用 `--copy <relPath>` 追加；`--copy-mode merge|overwrite|backup` 控制冲突）。
+- 解除 prepare 建的软链（不动用户在 worktree 内手动新建的真实文件）。
+- `git worktree remove --force` 删 worktree（拷完产物后 worktree 必然 dirty，--force 是预期行为；想保留状态调试加 `--keep`）。
+- 删空的 `.repo-demo-recorder/worktrees/` 父目录、移除自己写入的 `.git/info/exclude` pattern。
+
+### 何时不走 worktree
+
+下列情况直接在主工作树跑 scaffold 即可，不要 prepare worktree：
+
+- 目标项目**不是 git 仓库**：prepare 会 fail-fast，提示先 `git init` 或直接在原目录跑。
+- 录制内容就是**主工作树正在写的 uncommitted 改动**，且改动巨大不便临时 commit 再 carry。
+- 用户明确只要录"快速证据"（`--polish quick-proof`），且主工作树干净。
+
+### 外部录屏接入工作流
+
+iOS / Android / 桌面客户端 / CLI 等不能由 Playwright 驱动的项目，录制步骤本来就是 raw video → 后期脚本。worktree 隔离对它们的价值是**保护后期产物落地路径**：在 worktree 内运行 `add-tts-narration.mjs` / `generate-video-cover.mjs` / `embed-video-cover.mjs` / `validate-recording-report.mjs`，cleanup 时统一拷回 `docs/recordings/`。
+
 ## 项目类型与录制源
 
 skill 内置的脚本化录制路径依赖 Playwright 自动驱动浏览器，只适合可以本地起 web server 的项目（Web App / SaaS / 本地后端 + 浏览器 UI）。识别到下列情况时，应优先走"外部录屏接入"工作流：
@@ -63,6 +113,7 @@ scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/
 
 ## 工作流
 
+0. **准备录制 worktree**：在目标项目（git 仓库）里跑 `prepare-recording-worktree.mjs --root . --name <flow>`，得到 worktreePath；之后所有命令的 `--root` 都改为 worktreePath，runner 也在 worktreePath 内启动 dev server。不是 git 仓库或用户明确要求"原地录"时跳过本步。
 1. **读上下文**：读取项目启动命令、测试命令、auth/dev-login、seed/mock、禁区文件、现有录屏脚本和设计目标。
 2. **定叙事和观众**：先把流程整理成“观众能理解的路径”。客户演示按“场景 -> 价值 -> 可控机制 -> 下一步”写字幕/旁白；内部评审才保留实现细节和风险点。如果用户要求先确认方案，必须先输出/落盘方案并等待确认。
 3. **生成场景**：可运行 `scripts/scaffold-repo-demo.mjs` 生成场景 JSON、脚本骨架和录屏指南。正式 demo 优先把长流程拆成多个 segment。
@@ -76,7 +127,8 @@ scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/
 11. **生成审片页**：正式交付默认生成 review HTML，把视频、字幕时间线、质量门禁、封面候选和过渡帧放在同一页，便于逐段判断是否重录。
 12. **基础包装或专业交接**：skill 只做稳定的背景、尺寸、padding 和导出 preset；需要自然缩放、光标平滑、设备模型、复杂时间线时，生成 Screen Studio handoff 包交给专业软件处理。
 13. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面选择、复验结果、如何重录。
-14. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
+14. **回收 worktree**：在主工作树（或任何位置）跑 `cleanup-recording-worktree.mjs --worktree <worktreePath>`，把 `docs/recordings/` 和 `scripts/recordings/` 拷回主工作树并 `git worktree remove --force`；如果还想在 worktree 内调试，加 `--keep`，确认后再来一次不带 `--keep` 收尾。
+15. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
 
 ## 端类型规则
 
@@ -140,6 +192,8 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 
 ## 可用资源
 
+- `scripts/prepare-recording-worktree.mjs`：在目标项目里 `git worktree add` 一个隔离录制环境，自动软链 `node_modules` / `.env*`，可选 carry 未提交改动；输出 worktreePath 元数据供 cleanup 使用。
+- `scripts/cleanup-recording-worktree.mjs`：把 worktree 内的 `docs/recordings/` / `scripts/recordings/` 拷回主工作树，解除软链，`git worktree remove --force` 并清理 `.git/info/exclude` 注册的 pattern。
 - `scripts/scaffold-repo-demo.mjs`：在目标仓库生成场景 JSON、Playwright 脚本骨架、录屏指南。
 - `scripts/add-tts-narration.mjs`：从 report captions 生成 TTS 解说、VTT 解说稿，并合成带解说 MP4；支持 macOS `say` 和 `edge-tts`。
 - `scripts/generate-video-cover.mjs`：从视频抽帧生成标准封面，桌面端 16:9、手机端 9:16，可生成候选封面 contact sheet。
@@ -193,8 +247,10 @@ docs/recordings/
 
 完整命令清单见 `references/commands.md`。决策流程上你只需要记住：
 
+0. `prepare-recording-worktree.mjs` 在目标项目里开 worktree，cd 进去；不是 git 仓库则跳过本步。
 1. `scaffold-repo-demo.mjs` 生成 scenario + runner + guide。
 2. 跑 generated runner 录原始 MP4 + report.json。
 3. `add-tts-narration.mjs` 加解说，`generate-video-cover.mjs` 抽帧出封面，`embed-video-cover.mjs` 把封面嵌入 MP4，`trim-video-gap.mjs` 删开场空白。
 4. `validate-recording-report.mjs` 做质量门禁与抽帧复查。
 5. `generate-review-page.mjs` 输出本地审片 HTML；客户可发版用 `polish-video.mjs` 或 `prepare-screen-studio-handoff.mjs` 做最后包装。
+6. `cleanup-recording-worktree.mjs` 把产物拷回主工作树并删 worktree。

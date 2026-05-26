@@ -2,6 +2,52 @@
 
 `<skill>` 指 skill 安装路径（如 `~/.codex/skills/repo-demo-recorder` 或 `~/.claude/skills/repo-demo-recorder`）。在目标项目根目录执行。完整参数用 `--help` 查看。
 
+## 0. 准备录制 worktree（推荐）
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name add-data-flow
+```
+
+输出最后一行是 JSON（含 `worktreePath`、`linkedPaths`、`gitExclude` 等），按提示 `cd <worktreePath>` 之后所有命令的 `--root` 改成 `.` 即可。
+
+主工作树有未提交改动时，默认只警告不阻断。需要把改动一并带进 worktree：
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name add-data-flow \
+  --include-uncommitted
+```
+
+prepare 默认会软链 `node_modules` / `.env` / `.env.local` / `.env.development*` / `.env.test*` / `.env.production*`。要追加（例如 framework cache）：
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name add-data-flow \
+  --link .next \
+  --link .vite
+```
+
+录完后回收：
+
+```bash
+node <skill>/scripts/cleanup-recording-worktree.mjs --worktree <worktreePath>
+```
+
+默认拷回 `docs/recordings/` 和 `scripts/recordings/`。如果改了 `--out`，补 `--copy <relPath>`：
+
+```bash
+node <skill>/scripts/cleanup-recording-worktree.mjs \
+  --worktree <worktreePath> \
+  --copy docs/customer-demos \
+  --copy-mode overwrite
+```
+
+`--keep` 留住 worktree 调试；调好后再不带 `--keep` 跑一次正式收尾。
+
 ## 1. 生成场景骨架
 
 桌面端通用走查：

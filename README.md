@@ -78,6 +78,45 @@ For projects that **cannot** be driven by Playwright — iOS / macOS / Android /
 6. `validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` runs the media gate.
 7. `generate-review-page.mjs` writes a single HTML reviewers can open.
 
+## Recording in an isolated worktree (recommended)
+
+The skill records into the **target project** (the one being demoed). By default it does so from a dedicated git worktree, so the main checkout keeps its current branch, dirty state, and IDE session untouched:
+
+```bash
+# 0. From the target project root:
+node ~/.codex/skills/repo-demo-recorder/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name customer-demo
+
+# stdout last line is JSON with worktreePath; cd there and run scaffold/runner/tts/cover/validate as usual
+cd <worktreePath>
+
+# 1-9. scaffold / runner / TTS / cover / validate / review (all the commands below)
+
+# 10. Back from anywhere, copy artifacts back to the main checkout and remove the worktree
+node ~/.codex/skills/repo-demo-recorder/scripts/cleanup-recording-worktree.mjs \
+  --worktree <worktreePath>
+```
+
+What `prepare-recording-worktree.mjs` does:
+
+- `git worktree add --detach <root>/.repo-demo-recorder/worktrees/<name>` (override with `--worktree-dir`).
+- Symlinks `node_modules` and `.env*` from the main checkout so the worktree boots without a fresh install.
+- Optionally `--include-uncommitted` to carry staged + unstaged + untracked changes (default link paths skipped to keep symlinks intact).
+- Writes `/.repo-demo-recorder/` into `.git/info/exclude` so the worktree parent dir never shows up in the main checkout's `git status`.
+- Drops a `.repo-demo-recorder-worktree.json` metadata file inside the worktree for `cleanup-recording-worktree.mjs` to consume.
+
+What `cleanup-recording-worktree.mjs` does:
+
+- Copies `docs/recordings/` and `scripts/recordings/` (extend with `--copy <relPath>`) back to the main checkout. `--copy-mode merge|overwrite|backup` controls conflicts.
+- Unlinks the symlinks created by prepare, then `git worktree remove --force` (recording artifacts always make the worktree dirty — pass `--keep` to inspect first, then re-run to finalize).
+- Removes the `.git/info/exclude` pattern and prunes the empty `.repo-demo-recorder/` parent dirs.
+
+Skip the worktree step (and just run everything in the main checkout) when:
+
+- The target project is not a git repo (prepare fail-fasts and tells you to `git init` or skip).
+- The whole point of the recording is uncommitted local edits that are awkward to carry across a worktree.
+
 ## Basic Usage
 
 Ask Codex to use the skill, for example:

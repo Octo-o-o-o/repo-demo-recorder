@@ -381,8 +381,13 @@ function collectFailures(report, args) {
   for (const item of consoleMessages) {
     const type = item?.type || "unknown"
     const text = asText(item?.text || item)
-    if (type === "error" && !allowed(text, allowConsole)) {
-      failures.push(`未允许的 console error：${text}`)
+    if (type !== "error") continue
+    // 实战中 401/404 等资源加载错误，浏览器把 url 放在 message.location.url 而不是 text；
+    // 之前 allowedConsoleErrors 配 "/api/auth/me" 永远命不中。这里把 url 也并进 haystack。
+    const locationUrl = item?.location?.url ? String(item.location.url) : ""
+    const haystack = locationUrl ? `${text} ${locationUrl}` : text
+    if (!allowed(haystack, allowConsole)) {
+      failures.push(`未允许的 console error：${text}${locationUrl ? ` (url=${locationUrl})` : ""}`)
     }
   }
 

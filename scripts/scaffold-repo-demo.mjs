@@ -306,71 +306,35 @@ async function writeNew(filePath, content, force) {
 }
 
 function buildScenario(args, detection = null) {
-  const flowLabels = {
-    core: "核心浏览路径",
-    "add-data": "新增数据流程",
-    "edit-data": "编辑数据流程",
-    "delete-data": "删除或归档流程",
-    review: "审核与反馈流程",
-    export: "导出与分享流程",
-    "empty-error-loading": "空状态、错误状态与加载态",
-    mobile: "移动端关键路径"
-  }
   const isZh = args.language !== "en-US"
-  // 中文场景下默认用中文文案，避免封面/字幕里突然冒出英文造成违和
-  const coverDefaults = isZh
+  const flowLabels = isZh
     ? {
-        customerDesktop: {
-          title: "产品演示",
-          subtitle: "面向客户的可发版走查",
-          line: "首页 · 搜索 · 自动化",
-          badge: "客户演示"
-        },
-        customerMobile: {
-          title: "移动端演示",
-          subtitle: "移动端产品走查",
-          line: "竖屏 UI · 触控流程 · 移动端字幕",
-          badge: "移动端演示"
-        },
-        proof: {
-          title: "项目演示",
-          subtitle: "可验证的产品走查",
-          line: "脚本录制 · 字幕 · 质量报告",
-          badge: "已验证演示"
-        },
-        training: {
-          title: "操作培训",
-          subtitle: "面向新成员的步骤讲解",
-          line: "字段含义 · 操作顺序 · 验收点",
-          badge: "培训 SOP"
-        }
+        core: "核心浏览路径",
+        "add-data": "新增数据流程",
+        "edit-data": "编辑数据流程",
+        "delete-data": "删除或归档流程",
+        review: "审核与反馈流程",
+        export: "导出与分享流程",
+        "empty-error-loading": "空状态、错误状态与加载态",
+        mobile: "移动端关键路径"
       }
     : {
-        customerDesktop: {
-          title: "Product Demo",
-          subtitle: "Customer-ready product walkthrough",
-          line: "Home · Search · Automation",
-          badge: "CUSTOMER DEMO"
-        },
-        customerMobile: {
-          title: "Mobile Product Demo",
-          subtitle: "Mobile product walkthrough",
-          line: "Portrait UI · Touch flow · Mobile captions",
-          badge: "MOBILE DEMO"
-        },
-        proof: {
-          title: "Verified Demo",
-          subtitle: "Verified product walkthrough",
-          line: "Scripted recording · Captions · Quality report",
-          badge: "VERIFIED DEMO"
-        },
-        training: {
-          title: "Training Walkthrough",
-          subtitle: "Step-by-step training",
-          line: "Fields · Steps · Acceptance",
-          badge: "TRAINING"
-        }
+        core: "Core browsing",
+        "add-data": "Add data",
+        "edit-data": "Edit data",
+        "delete-data": "Delete / archive",
+        review: "Review & feedback",
+        export: "Export & share",
+        "empty-error-loading": "Empty / error / loading states",
+        mobile: "Mobile critical path"
       }
+  // 把 flowLabels 拼成一个简短的封面 line，比 hardcode "首页 · 搜索 · 自动化" 贴近用户实际 flows。
+  // 取前 3 条 flow（足够装下 16:9 副标题宽度），中间用 " · " 分隔。
+  const coverLineFromFlows = args.flows
+    .map((flow) => flowLabels[flow] || flow)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" · ")
   const inferredSurface =
     args.surface === "auto"
       ? args.flows.length === 1 && args.flows[0] === "mobile"
@@ -406,10 +370,78 @@ function buildScenario(args, detection = null) {
   const activeSurface = surfacePresets[primarySurface] || surfacePresets.desktop
   const isPortrait = activeSurface.videoSize.height > activeSurface.videoSize.width
   const isMobile = primarySurface === "mobile"
+  // 封面 line 优先用 args.flows 推断；如果用户的 flows 信息已经够具体（如 "add-data,edit-data"），
+  // 直接用 flow labels 拼接；都对不上时再 fallback 到通用文案。
+  // 历史上这里 hardcode "首页 · 搜索 · 自动化"，跟用户实际 flows 完全无关，封面误导客户演示。
+  const coverFallbackLine = isZh ? "脚本录制 · 字幕 · 质量报告" : "Scripted recording · Captions · Quality report"
+  const coverDefaults = isZh
+    ? {
+        customerDesktop: {
+          title: "产品演示",
+          subtitle: "面向客户的可发版走查",
+          line: coverLineFromFlows || coverFallbackLine,
+          badge: "客户演示"
+        },
+        customerMobile: {
+          title: "移动端演示",
+          subtitle: "移动端产品走查",
+          line: coverLineFromFlows || "竖屏 UI · 触控流程 · 移动端字幕",
+          badge: "移动端演示"
+        },
+        proof: {
+          title: "项目演示",
+          subtitle: "可验证的产品走查",
+          line: coverLineFromFlows || coverFallbackLine,
+          badge: "已验证演示"
+        },
+        training: {
+          title: "操作培训",
+          subtitle: "面向新成员的步骤讲解",
+          line: coverLineFromFlows || "字段含义 · 操作顺序 · 验收点",
+          badge: "培训 SOP"
+        }
+      }
+    : {
+        customerDesktop: {
+          title: "Product Demo",
+          subtitle: "Customer-ready product walkthrough",
+          line: coverLineFromFlows || coverFallbackLine,
+          badge: "CUSTOMER DEMO"
+        },
+        customerMobile: {
+          title: "Mobile Product Demo",
+          subtitle: "Mobile product walkthrough",
+          line: coverLineFromFlows || "Portrait UI · Touch flow · Mobile captions",
+          badge: "MOBILE DEMO"
+        },
+        proof: {
+          title: "Verified Demo",
+          subtitle: "Verified product walkthrough",
+          line: coverLineFromFlows || coverFallbackLine,
+          badge: "VERIFIED DEMO"
+        },
+        training: {
+          title: "Training Walkthrough",
+          subtitle: "Step-by-step training",
+          line: coverLineFromFlows || "Fields · Steps · Acceptance",
+          badge: "TRAINING"
+        }
+      }
+  // audience → style 映射：之前一律 hardcode "qa-proof"，导致客户演示 scenario 在 style 字段里
+  // 仍标注 qa-proof，与 audience 不一致。validate 不读 style，但用户/Screen Studio handoff 文档会读。
+  const styleByAudience = {
+    customer: "sales-demo",
+    "internal-review": "qa-proof",
+    "qa-proof": "qa-proof",
+    training: "training",
+    "release-pr": "release-pr"
+  }
+  const titleSuffix = isZh ? "录屏" : " recording"
+  const titleFallback = isZh ? "项目演示" : "Product demo"
 
   return {
     name: args.name,
-    title: `${flowLabels[args.flows[0]] || "项目演示"}录屏`,
+    title: `${flowLabels[args.flows[0]] || titleFallback}${titleSuffix}`,
     baseUrl: args.baseUrl,
     language: args.language,
     subtitles: args.subtitles,
@@ -451,7 +483,7 @@ function buildScenario(args, detection = null) {
       padBufferMs: 300,
       maxPaddingMs: 60000
     },
-    style: "qa-proof",
+    style: styleByAudience[args.audience] || "qa-proof",
     viewport: activeSurface.viewport,
     recording: {
       videoSize: activeSurface.videoSize,
@@ -600,13 +632,19 @@ function buildScenario(args, detection = null) {
         }
       }
     })(),
+    // flow.surface 与 primarySurface 强制一致。runner 不会按 flow.surface 切 viewport（一份录屏共享
+    // 一个 browser context），如果让 mobile flow 写 surface=mobile 但实际在 desktop viewport 录制，
+    // 会让用户错以为 runner 在录制中途切到手机端，反而埋下混合 surface 的坑。所以全部跟 primarySurface 走；
+    // 真正想录 mobile，应该跑 `--surface mobile`（或 multi 再单独跑一遍）。
     flows: args.flows.map((flow) => ({
       id: flow,
-      surface: flow === "mobile" ? "mobile" : primarySurface,
+      surface: primarySurface,
       route: "/",
       caption: {
         title: flowLabels[flow] || flow,
-        body: "补充这一页的业务价值、核心操作和观看重点。",
+        // body 默认留空，让 TTS 只读 title，避免 scaffold 默认占位文案被 TTS 朗读到客户视频里。
+        // 用户在 scenario 里填上业务说明后，TTS 自动用 title + body 拼接。
+        body: "",
         durationMs: 3200
       },
       steps: [
@@ -614,7 +652,8 @@ function buildScenario(args, detection = null) {
         {
           type: "caption",
           title: flowLabels[flow] || flow,
-          body: "替换为该流程的真实说明字幕。",
+          // 同上：默认空字符串。runner 接收空 body 时只显示 title，TTS 也只读 title。
+          body: "",
           durationMs: 3000
         },
         {
@@ -631,19 +670,27 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
   const videoSize = scenario.recording?.videoSize || scenario.viewport || { width: 1440, height: 960 }
   const coverSize = scenario.cover || { width: 1280, height: 720 }
   const isPortrait = Number(videoSize.height) > Number(videoSize.width)
-  const surfaceText =
-    scenario.primarySurface === "mobile"
+  const isEn = args.language === "en-US"
+  const surfaceText = isEn
+    ? scenario.primarySurface === "mobile"
+      ? "Mobile portrait"
+      : scenario.primarySurface === "tablet"
+        ? "Tablet"
+        : "Desktop landscape"
+    : scenario.primarySurface === "mobile"
       ? "手机端竖屏"
       : scenario.primarySurface === "tablet"
         ? "平板端"
         : "桌面端横屏"
-  const coverRatioText = Number(coverSize.height) > Number(coverSize.width) ? "9:16 竖屏" : "16:9 横屏"
+  const coverRatioText = Number(coverSize.height) > Number(coverSize.width)
+    ? isEn ? "9:16 portrait" : "9:16 竖屏"
+    : isEn ? "16:9 landscape" : "16:9 横屏"
   // 命令中直接复用 scenario.cover.* 的真实文案（按 language 已国际化），
   // 不再 hardcode 英文标题/副标题，避免用户照搬命令把中文封面覆盖成英文。
-  const coverTitle = scenario.cover?.title || (args.language === "en-US" ? "Product Demo" : "产品演示")
+  const coverTitle = scenario.cover?.title || (isEn ? "Product Demo" : "产品演示")
   const coverSubtitle =
     scenario.cover?.subtitle ||
-    (args.language === "en-US"
+    (isEn
       ? scenario.primarySurface === "mobile"
         ? "Mobile product walkthrough"
         : args.audience === "customer"
@@ -651,8 +698,16 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
           : "Verified product walkthrough"
       : "可验证的产品走查")
   const backupHint = scenario.data?.backupCommand
-    ? `先运行场景中的 \`data.backupCommand\` (\`${scenario.data.backupCommand}\`) 备份数据库。`
-    : "把 `scenario.data.backupCommand` 改成你项目里实际的备份命令（例如 `docker compose exec db pg_dump ... > backup.sql`），并在录屏前手动执行；当前默认是 null，runner 不会自动备份。"
+    ? isEn
+      ? `Run \`data.backupCommand\` (\`${scenario.data.backupCommand}\`) before recording to back up the database.`
+      : `先运行场景中的 \`data.backupCommand\` (\`${scenario.data.backupCommand}\`) 备份数据库。`
+    : isEn
+      ? "Replace `scenario.data.backupCommand` with the project's real backup command (e.g. `docker compose exec db pg_dump ... > backup.sql`) and run it manually before recording. The default is `null` and the runner will not back up automatically."
+      : "把 `scenario.data.backupCommand` 改成你项目里实际的备份命令（例如 `docker compose exec db pg_dump ... > backup.sql`），并在录屏前手动执行；当前默认是 null，runner 不会自动备份。"
+
+  if (isEn) return buildGuideEn(args, scenario, scenarioPath, scriptPath, {
+    videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint
+  })
 
   return `# 录屏说明
 
@@ -672,12 +727,13 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
 
 ## 录制前
 
-1. 确认本地服务依赖可用。如果项目依赖 PostgreSQL/Redis/外部服务（如 Tauri devUrl、worker 进程），请额外手动启动；\`scenario.server.command\` 只会启动单一 dev server。
-2. 如果场景会写入数据库：${backupHint}
-3. 补齐场景 JSON 里的 route、selector、\`step.waitForApi\`（API 断言）和 \`flow.assertions[].type=="db"\`（DB 落库断言，需配套写一个 \`async (params) => boolean\` 的 module）。
-4. 避免真实客户数据、真实密码、token、邮箱验证码入镜；登录优先使用 dev-login + \`auth.storageState\` 或专用演示租户。
-5. 如果目标观众是客户，字幕和旁白先讲客户价值，再讲可控机制；不要把 mock、fixture、临时脚本、dev warning 等内部词放进画面。
-6. 如果项目同时有桌面端和手机版，手机版单独录制竖屏版本；不要把桌面横屏视频直接裁成手机视频。
+1. **必做：替换默认占位文案**。scaffold 生成的 \`scenario.flows[].caption.title\` 是流程标签（如"核心浏览路径"），\`body\` 字段是空字符串。直接录制会让字幕/TTS 只显示/朗读 title，缺少业务价值描述。请把每一条 caption（包括 \`flow.caption\` 与 \`steps[].caption\`）的 \`body\` 改写成"这一页能解决什么业务问题"的短句，再录制。
+2. 确认本地服务依赖可用。如果项目依赖 PostgreSQL/Redis/外部服务（如 Tauri devUrl、worker 进程），请额外手动启动；\`scenario.server.command\` 只会启动单一 dev server。
+3. 如果场景会写入数据库：${backupHint}
+4. 补齐场景 JSON 里的 route、selector、\`step.waitForApi\`（API 断言）和 \`flow.assertions[].type=="db"\`（DB 落库断言，需配套写一个 \`async (params) => boolean\` 的 module）。
+5. 避免真实客户数据、真实密码、token、邮箱验证码入镜；登录优先使用 dev-login + \`auth.storageState\` 或专用演示租户。
+6. 如果目标观众是客户，字幕和旁白先讲客户价值，再讲可控机制；不要把 mock、fixture、临时脚本、dev warning 等内部词放进画面。
+7. 如果项目同时有桌面端和手机版，手机版单独录制竖屏版本；不要把桌面横屏视频直接裁成手机视频。
 
 ## 录制
 
@@ -767,6 +823,122 @@ ${isPortrait ? "- 竖屏手机视频的字幕使用底部安全区，但必须�
 `
 }
 
+function buildGuideEn(args, scenario, scenarioPath, scriptPath, ctx) {
+  const { videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint } = ctx
+  return `# Recording Guide
+
+## Overview
+
+- Scenario: \`${args.name}\`
+- Scenario file: \`${scenarioPath}\`
+- Runner: \`${scriptPath}\`
+- Subtitles: \`${args.subtitles}\`
+- Language: \`${args.language}\`
+- Flows: \`${args.flows.join(", ")}\`
+- Audience: \`${args.audience}\`
+- Polish: \`${args.polish}\`
+- Surface: \`${surfaceText}\`
+- Video size: \`${videoSize.width}x${videoSize.height}\`
+- Cover size: \`${coverSize.width}x${coverSize.height}\`
+
+## Before Recording
+
+1. **Required: replace the placeholder caption text.** The scaffold leaves \`scenario.flows[].caption.body\` (and \`steps[].caption.body\`) empty. Captions will then show only the title and TTS will only narrate the title. Edit every caption \`body\` into a short business-value sentence before recording.
+2. Make sure local dependencies are running. If the project needs PostgreSQL/Redis/workers/Tauri devUrl, start them manually; \`scenario.server.command\` only launches a single dev server.
+3. If the flow writes to the database: ${backupHint}
+4. Fill in real routes, selectors, \`step.waitForApi\` (API assertions), and \`flow.assertions[].type=="db"\` (DB assertions; supply an \`async (params) => boolean\` module).
+5. Never record real customer data, real passwords, tokens or 2FA codes. Prefer dev-login + \`auth.storageState\` or a dedicated demo tenant.
+6. For customer audiences keep captions/narration value-first; do not write \`mock\`, \`fixture\`, \`renderer-only\`, internal boundary names or dev warnings into the on-screen text.
+7. Record desktop and mobile separately when the product ships on both surfaces; do not crop a desktop recording into a mobile portrait video.
+
+## Record
+
+\`\`\`bash
+node ${scriptPath}
+\`\`\`
+
+## Add TTS Narration
+
+\`\`\`bash
+node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --language ${args.language} --engine edge-tts --voice ${scenario.narration.voice} --pad-mode freeze --pad-buffer-ms 300
+\`\`\`
+
+> \`--pad-mode freeze\` (default) inserts cloned freeze frames at the end of any cue whose TTS audio is longer than its display window, and shifts subsequent cues. The narration-report exposes \`timeline.totalPaddingMs\` and per-cue \`paddingMs\`. A cue that needs more than \`--max-padding-ms\` (default 60000) fails fast; shorten that cue's text.
+> \`--engine edge-tts\` needs \`uvx\` and network access; it sends the text to Microsoft Edge online TTS. Offline? Use \`--engine macos-say --voice Tingting\` (or any voice from \`say -v ?\`).
+
+## Generate Cover
+
+Formal delivery should produce a standard ${coverRatioText} cover with candidate review:
+
+\`\`\`bash
+node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-cover.png --title "${coverTitle}" --subtitle "${coverSubtitle}" --width ${coverSize.width} --height ${coverSize.height} --theme ${scenario.primarySurface === "mobile" ? "mobile" : args.audience === "training" ? "training" : args.audience === "customer" ? "customer" : "proof"} --candidates-dir ${args.out}/${args.name}-cover-candidates
+\`\`\`
+
+Open \`${args.out}/${args.name}-cover-candidates/contact-sheet.png\`. If the auto-picked frame is not representative, pass \`--timestamp 00:00:36\` (or any HH:MM:SS) and rerun.
+
+## Embed Cover Into MP4
+
+The MP4 cover PNG must be muxed in as the \`attached_pic\` stream so players, drive previews, and review tools treat it as the thumbnail. The command supports in-place output:
+
+\`\`\`bash
+node <skill>/scripts/embed-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --cover ${args.out}/${args.name}-cover.png --out ${args.out}/${args.name}-narrated.mp4 --intro-duration-ms 2000 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --narration-vtt ${args.out}/${args.name}-narrated-narration.vtt --report ${args.out}/${args.name}-cover-embed-report.json
+\`\`\`
+
+> \`attached_pic\` is metadata; not every browser/QuickTime/drive preview will use it as the pre-play poster. \`--intro-duration-ms 2000\` also prepends 2 visible seconds of the cover frame and shifts the narration VTT/report. Drop the flag if you only need the metadata cover.
+
+If the cover slate is followed by a blank/loading gap, remove that range and keep the narration files in sync:
+
+\`\`\`bash
+node <skill>/scripts/trim-video-gap.mjs --video ${args.out}/${args.name}-narrated.mp4 --cover ${args.out}/${args.name}-cover.png --out ${args.out}/${args.name}-narrated.mp4 --remove-start-ms 2000 --remove-end-ms 8500 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --narration-vtt ${args.out}/${args.name}-narrated-narration.vtt --report ${args.out}/${args.name}-gap-trim-report.json
+\`\`\`
+
+## Quality Gates
+
+\`\`\`bash
+node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --require-audio --require-cover-art --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+\`\`\`
+
+For TTS output also pass the narration report so duration drift is checked:
+
+\`\`\`bash
+node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --require-audio --require-cover-art --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+\`\`\`
+
+## Review Page
+
+\`\`\`bash
+node <skill>/scripts/generate-review-page.mjs --report ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --media-report ${args.out}/${args.name}-media-report.json --cover ${args.out}/${args.name}-cover.png --cover-candidates ${args.out}/${args.name}-cover-candidates --frame-review ${args.out}/${args.name}-frame-review --out ${args.out}/${args.name}-review.html
+\`\`\`
+
+## Polish / Screen Studio Handoff
+
+\`\`\`bash
+node <skill>/scripts/polish-video.mjs --video ${args.out}/${args.name}-narrated.mp4 --out ${args.out}/${args.name}-polished.mp4 --preset ${scenario.postProduction.polishPreset}
+\`\`\`
+
+If you need Screen Studio-level zoom, cursor smoothing, device frames, or timeline edits, build the handoff bundle first:
+
+\`\`\`bash
+node <skill>/scripts/prepare-screen-studio-handoff.mjs --out ${args.out}/${args.name}-screen-studio-handoff --target ${scenario.postProduction.screenStudioTarget} --raw-video ${args.out}/${args.name}.mp4 --narrated-video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --scenario ${args.out}/${args.name}.scenario.json --vtt ${args.out}/${args.name}-narrated-narration.vtt --cover ${args.out}/${args.name}-cover.png --frame-review ${args.out}/${args.name}-frame-review --cover-candidates ${args.out}/${args.name}-cover-candidates
+\`\`\`
+
+## Caption Rules
+
+- Describe the business problem this screen solves; do not explain the script.
+- Keep each caption to 1-2 lines; avoid form inputs and primary CTAs.
+- Highlights are visual cues only; clear them before any click/fill.
+${isPortrait ? "- Portrait mobile captions sit in the bottom safe area but must avoid the bottom nav, inputs, and primary CTA.\n" : ""}
+
+## Overlay Polish
+
+- Overlays stay anchored at their final position. Only short \`opacity\` transitions are allowed.
+- Do not animate captions/chapters with \`translateY/translateX/scale/clip-path\`.
+- Record \`caption.startMs\` only after the overlay has settled; record \`endMs\` before hiding and wait for the transition to end.
+- For formal delivery, inspect \`${args.out}/${args.name}-frame-review/contact-sheet.png\` for half-rendered overlays or occluded controls.
+- Inspect \`${args.out}/${args.name}-cover.png\` and confirm the product name/topic is legible, the UI screenshot is real, and the cover does not leak internal terminology.
+`
+}
+
 // runner 源码独立放在 scripts/templates/playwright-runner.mjs，便于直接 lint / IDE 跳转，
 // 不再是巨大的字符串模板嵌入。scaffold 时把两个占位字符串替换为真实路径。
 const __scaffoldFile = fileURLToPath(import.meta.url)
@@ -850,6 +1022,29 @@ if (!guideExists) {
 }
 
 await maybeWarnGitignore(root, args.out)
+
+// 用户传 `--flows core,mobile` 但 surface=auto 时，scaffold 推断 primarySurface=desktop，
+// mobile flow 在桌面 viewport 下录制，效果完全不像手机版。SKILL.md 也明确说"桌面端和手机版应优先
+// 分别录制"。这里给出明确警告 + 建议命令。
+if (scenario.primarySurface !== "mobile" && args.flows.includes("mobile")) {
+  console.warn(
+    `[scaffold] 提醒：flow 列表包含 "mobile"，但当前主端是 "${scenario.primarySurface}"。\n` +
+      `  这条 mobile flow 仍然会在桌面 viewport 下录制，看起来不像手机端 demo。\n` +
+      `  推荐：另外跑一次 scaffold 单独生成手机版录屏：\n` +
+      `    node <skill>/scripts/scaffold-repo-demo.mjs --root . --name ${args.name}-mobile --surface mobile --flows mobile --base-url ${args.baseUrl}\n` +
+      `  或者把当前的 --surface 改成 mobile 录纯手机端版本。`
+  )
+}
+
+// 用户传 `--surface multi` 时只生成桌面录屏脚本（primarySurface=desktop fallback）。
+// 多端项目需要分别生成桌面和手机两份；提醒用户继续跑一次手机版。
+if (scenario.surface === "multi") {
+  console.warn(
+    `[scaffold] 提醒：--surface=multi 只会生成一份基于 "${scenario.primarySurface}" 的录屏脚本。\n` +
+      `  请再跑一次手机版以生成竖屏录屏：\n` +
+      `    node <skill>/scripts/scaffold-repo-demo.mjs --root . --name ${args.name}-mobile --surface mobile --flows mobile --base-url ${args.baseUrl}`
+  )
+}
 
 console.log(`已生成录屏场景：${scenarioRelativePath}`)
 console.log(`已生成录屏脚本：${scriptRelativePath}`)

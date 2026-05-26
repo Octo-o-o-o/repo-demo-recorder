@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { existsSync } from "node:fs"
+import { existsSync, lstatSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
@@ -50,7 +50,9 @@ async function checkRequiredFiles() {
     "scripts/polish-video.mjs",
     "scripts/prepare-screen-studio-handoff.mjs",
     "scripts/validate-recording-report.mjs",
-    "scripts/install-skill.mjs"
+    "scripts/install-skill.mjs",
+    "scripts/prepare-recording-worktree.mjs",
+    "scripts/cleanup-recording-worktree.mjs"
   ]) {
     if (!existsSync(path.join(repoRoot, filePath))) fail(`Missing required file: ${filePath}`)
   }
@@ -78,7 +80,9 @@ async function checkScriptSyntax() {
     "scripts/prepare-screen-studio-handoff.mjs",
     "scripts/validate-recording-report.mjs",
     "scripts/install-skill.mjs",
-    "scripts/check-skill.mjs"
+    "scripts/check-skill.mjs",
+    "scripts/prepare-recording-worktree.mjs",
+    "scripts/cleanup-recording-worktree.mjs"
   ]) {
     run("node", ["--check", filePath])
   }
@@ -124,6 +128,34 @@ async function checkScaffoldSmoke() {
     if (scenario.cover?.title === "Product Demo") {
       fail("Scaffold should localize cover.title for zh-CN customer demos")
     }
+    // cover.line 不再是 hardcode "首页 · 搜索 · 自动化"；当 flows=core,mobile 时应至少包含 flow labels
+    if (scenario.cover?.line === "首页 · 搜索 · 自动化") {
+      fail("Scaffold cover.line should be derived from --flows, not the legacy hardcoded preset")
+    }
+    if (!scenario.cover?.line?.includes("核心浏览路径")) {
+      fail(`Scaffold cover.line should include flow labels (got: "${scenario.cover?.line}")`)
+    }
+    // flow.surface 应跟 primarySurface 一致；runner 不切 viewport，不一致会误导用户
+    for (const flow of scenario.flows || []) {
+      if (flow.surface !== scenario.primarySurface) {
+        fail(`Scaffold flow "${flow.id}" surface=${flow.surface} should match primarySurface=${scenario.primarySurface}`)
+      }
+    }
+    // 默认 caption.body 不能是 "替换为该流程的真实说明字幕。" 这类占位文案，否则 TTS 会朗读到客户视频里
+    for (const flow of scenario.flows || []) {
+      if (flow.caption?.body && /替换|补充这一页/.test(flow.caption.body)) {
+        fail(`Scaffold flow "${flow.id}" caption.body still contains placeholder text: "${flow.caption.body}"`)
+      }
+      for (const step of flow.steps || []) {
+        if (step.body && /替换|补充这一页/.test(step.body)) {
+          fail(`Scaffold step in flow "${flow.id}" still contains placeholder body: "${step.body}"`)
+        }
+      }
+    }
+    // style 应跟随 audience；customer audience 应是 sales-demo（而不是历史的 hardcode qa-proof）
+    if (scenario.style !== "sales-demo") {
+      fail(`Scaffold style should be "sales-demo" for audience=customer, got "${scenario.style}"`)
+    }
 
     run("node", [
       "scripts/scaffold-repo-demo.mjs",
@@ -167,6 +199,69 @@ async function checkScaffoldSmoke() {
     }
     if (!mobileScenario.device?.isMobile || !mobileScenario.device?.hasTouch) {
       fail("Mobile scaffold did not enable mobile/touch device settings")
+    }
+    // en-US 应该生成英文 RECORDING_GUIDE.md，不能仍然是中文
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root",
+      tempRoot,
+      "--name",
+      "en-demo",
+      "--language",
+      "en-US",
+      "--audience",
+      "customer",
+      "--polish",
+      "customer-ready",
+      "--flows",
+      "core",
+      "--base-url",
+      "http://127.0.0.1:5173",
+      "--force"
+    ])
+    const enGuide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!enGuide.startsWith("# Recording Guide")) {
+      fail(`en-US scaffold should write English RECORDING_GUIDE.md (first line: "${enGuide.split("\n")[0]}")`)
+    }
+    if (/^- 场景：/m.test(enGuide)) {
+      fail("en-US scaffold should not include Chinese section labels in RECORDING_GUIDE.md")
+    }
+    const enScenario = JSON.parse(
+      await readFile(path.join(tempRoot, "docs/recordings/en-demo.scenario.json"), "utf8")
+    )
+    // en-US 时 title 应使用英文 suffix " recording"
+    if (!enScenario.title?.endsWith("recording")) {
+      fail(`en-US scaffold scenario.title should end with " recording", got "${enScenario.title}"`)
+    }
+
+    // mobile flow + desktop surface 应触发 console.warn（不应 fail；只验证 scenario 仍生成）
+    const mixedResult = spawnSync(
+      "node",
+      [
+        "scripts/scaffold-repo-demo.mjs",
+        "--root",
+        tempRoot,
+        "--name",
+        "mixed-flow",
+        "--surface",
+        "desktop",
+        "--audience",
+        "qa-proof",
+        "--polish",
+        "quick-proof",
+        "--flows",
+        "core,mobile",
+        "--base-url",
+        "http://127.0.0.1:5173",
+        "--force"
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (mixedResult.status !== 0) {
+      fail(`scaffold core,mobile + surface=desktop should succeed but exited ${mixedResult.status}`)
+    }
+    if (!(mixedResult.stdout + mixedResult.stderr).includes("flow 列表包含")) {
+      fail("scaffold should warn when mobile flow is recorded under desktop primarySurface")
     }
   } finally {
     await rm(tempRoot, { recursive: true, force: true })
@@ -530,6 +625,132 @@ async function checkAvoidVisibleTermsSmoke() {
   }
 }
 
+async function checkConsoleErrorAllowlistSmoke() {
+  // allowedConsoleErrors 应当同时匹配 message.text 和 message.location.url；
+  // 历史上只匹配 message.text，"Failed to load resource ... 401" 这种 chromium 输出永远命不中
+  // "/api/auth/me"，导致用户加白后仍然 fail。
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-console-allow-"))
+  try {
+    const baseReport = {
+      scenario: "console-allow",
+      qualityGates: { allowedConsoleErrors: ["/api/auth/me"], allowedResponseErrors: ["/api/auth/me"] },
+      captions: [],
+      steps: [{ label: "start", highlightVisible: false, overflow: 0 }],
+      consoleMessages: [
+        {
+          type: "error",
+          text: "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+          location: { url: "http://localhost:3000/api/auth/me", lineNumber: 0 }
+        }
+      ],
+      pageErrors: [],
+      responseErrors: [{ status: 401, url: "http://localhost:3000/api/auth/me", method: "GET" }]
+    }
+    const reportPath = path.join(tempRoot, "report.json")
+    await writeFile(reportPath, `${JSON.stringify(baseReport, null, 2)}\n`)
+    const okResult = spawnSync(
+      "node",
+      ["scripts/validate-recording-report.mjs", reportPath],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (okResult.status !== 0 && !okResult.stdout.includes("录屏质量门禁通过")) {
+      // 注意：因为缺少 video 校验，会通过；如果 fail，必须不是 console error 命中导致的
+      if ((okResult.stdout + okResult.stderr).includes("未允许的 console error")) {
+        fail(
+          `validate-recording-report should match allowedConsoleErrors against message.location.url; output:\n${okResult.stdout}\n${okResult.stderr}`
+        )
+      }
+    }
+
+    // 反向：如果 allowlist 不含该 url，则应该 fail，并输出 url 方便诊断
+    const strictReport = {
+      ...baseReport,
+      qualityGates: { allowedConsoleErrors: [], allowedResponseErrors: [] }
+    }
+    const strictPath = path.join(tempRoot, "strict-report.json")
+    await writeFile(strictPath, `${JSON.stringify(strictReport, null, 2)}\n`)
+    const failResult = spawnSync(
+      "node",
+      ["scripts/validate-recording-report.mjs", strictPath],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (failResult.status === 0) {
+      fail("validate-recording-report should fail when console errors are not in allowlist")
+    }
+    if (!(failResult.stdout + failResult.stderr).includes("api/auth/me")) {
+      fail(
+        "validate-recording-report should print the offending console message url for diagnosis, but did not include /api/auth/me"
+      )
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
+async function checkReviewPageLangSmoke() {
+  // review HTML 的 <html lang> 必须跟随 report.language（zh-CN/en-US...），不能硬编码 "en"
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-review-lang-"))
+  try {
+    const reportPath = path.join(tempRoot, "report.json")
+    const outPath = path.join(tempRoot, "review.html")
+    await writeFile(
+      reportPath,
+      `${JSON.stringify(
+        {
+          scenario: "review-lang",
+          language: "zh-CN",
+          captions: [],
+          steps: [{ label: "start", highlightVisible: false, overflow: 0 }],
+          consoleMessages: [],
+          pageErrors: [],
+          responseErrors: []
+        },
+        null,
+        2
+      )}\n`
+    )
+    run("node", [
+      "scripts/generate-review-page.mjs",
+      "--report",
+      reportPath,
+      "--out",
+      outPath
+    ])
+    const html = await readFile(outPath, "utf8")
+    if (!/<html\s+lang="zh-CN">/.test(html)) {
+      fail(`review HTML should use lang="zh-CN" when report.language=zh-CN, got: ${html.split("\n", 3)[1]}`)
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
+async function checkTtsArgValidationSmoke() {
+  // add-tts-narration.mjs 必须拒绝 --video-crf 超出 0-51 范围（之前不校验，等到 ffmpeg 才抛）
+  // 直接传一个虚假 --video 路径也无所谓，因为 args 校验在文件读取之前
+  const result = spawnSync(
+    "node",
+    [
+      "scripts/add-tts-narration.mjs",
+      "--video",
+      "/tmp/does-not-exist.mp4",
+      "--report",
+      "/tmp/does-not-exist.json",
+      "--out",
+      "/tmp/does-not-exist-out.mp4",
+      "--video-crf",
+      "9999"
+    ],
+    { cwd: repoRoot, encoding: "utf8" }
+  )
+  if (result.status === 0) {
+    fail("add-tts-narration should reject --video-crf 9999")
+  }
+  if (!(result.stdout + result.stderr).includes("--video-crf")) {
+    fail("add-tts-narration should mention --video-crf in the error")
+  }
+}
+
 async function checkProjectDetectionSmoke() {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-detect-"))
   try {
@@ -743,6 +964,196 @@ async function checkCoverLocalizationSmoke() {
   }
 }
 
+async function checkWorktreeIsolationSmoke() {
+  // 端到端验证 prepare-recording-worktree.mjs + cleanup-recording-worktree.mjs：
+  // 建临时 git 仓库 → 制造 dirty + untracked → prepare → 写 artifact → cleanup →
+  // 验证 worktree 删干净、产物拷回主工作树、exclude 注册/移除、symlink 是真的 symlink。
+  const gitCheck = spawnSync("git", ["--version"], { encoding: "utf8" })
+  if (gitCheck.status !== 0) {
+    console.warn("[check] skipping worktree isolation smoke because git is unavailable")
+    return
+  }
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-worktree-"))
+  try {
+    const gitInit = spawnSync("git", ["init", "-q"], { cwd: tempRoot, encoding: "utf8" })
+    if (gitInit.status !== 0) {
+      fail(`worktree smoke: git init failed: ${gitInit.stderr}`)
+      return
+    }
+    spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: tempRoot })
+    spawnSync("git", ["config", "user.name", "Tester"], { cwd: tempRoot })
+
+    await writeFile(path.join(tempRoot, "README.md"), "# base\n")
+    await writeFile(path.join(tempRoot, ".gitignore"), "node_modules/\n")
+    await mkdir(path.join(tempRoot, "node_modules", "fake-lib"), { recursive: true })
+    await writeFile(
+      path.join(tempRoot, "node_modules", "fake-lib", "index.js"),
+      "module.exports={}\n"
+    )
+    await writeFile(path.join(tempRoot, ".env.local"), "API_KEY=demo\n")
+    spawnSync("git", ["add", "README.md", ".gitignore"], { cwd: tempRoot })
+    const commit = spawnSync("git", ["commit", "-q", "-m", "init"], {
+      cwd: tempRoot,
+      encoding: "utf8"
+    })
+    if (commit.status !== 0) {
+      fail(`worktree smoke: git commit failed: ${commit.stderr}`)
+      return
+    }
+
+    // dirty：含 staged/unstaged + untracked，验证 --include-uncommitted 都能搬过去
+    await writeFile(path.join(tempRoot, "README.md"), "# base\nmore line\n")
+    await writeFile(path.join(tempRoot, "NEW.txt"), "untracked\n")
+
+    const prepareResult = spawnSync(
+      "node",
+      [
+        "scripts/prepare-recording-worktree.mjs",
+        "--root",
+        tempRoot,
+        "--name",
+        "smoke",
+        "--include-uncommitted"
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (prepareResult.status !== 0) {
+      fail(
+        `prepare-recording-worktree.mjs failed:\nstdout=${prepareResult.stdout}\nstderr=${prepareResult.stderr}`
+      )
+      return
+    }
+    const stdoutLines = prepareResult.stdout.trim().split(/\r?\n/)
+    const meta = JSON.parse(stdoutLines[stdoutLines.length - 1])
+    if (meta.schema !== "repo-demo-recorder/worktree.v1") {
+      fail(`prepare metadata schema mismatch: ${meta.schema}`)
+      return
+    }
+    const worktreePath = meta.worktreePath
+
+    if (!existsSync(worktreePath)) {
+      fail("prepare did not create worktreePath")
+      return
+    }
+    if (!existsSync(path.join(worktreePath, ".repo-demo-recorder-worktree.json"))) {
+      fail("prepare did not write metadata file inside worktree")
+      return
+    }
+    const nodeModulesLink = path.join(worktreePath, "node_modules")
+    if (!existsSync(nodeModulesLink) || !lstatSync(nodeModulesLink).isSymbolicLink()) {
+      fail("prepare did not symlink node_modules into worktree")
+      return
+    }
+    const envLink = path.join(worktreePath, ".env.local")
+    if (!existsSync(envLink) || !lstatSync(envLink).isSymbolicLink()) {
+      fail("prepare did not symlink .env.local into worktree")
+      return
+    }
+    const carriedReadme = await readFile(path.join(worktreePath, "README.md"), "utf8")
+    if (!carriedReadme.includes("more line")) {
+      fail("prepare --include-uncommitted did not carry tracked diff")
+      return
+    }
+    if (!existsSync(path.join(worktreePath, "NEW.txt"))) {
+      fail("prepare --include-uncommitted did not copy untracked files")
+      return
+    }
+    const excludeText = await readFile(path.join(tempRoot, ".git/info/exclude"), "utf8")
+    if (
+      !excludeText.split(/\r?\n/).some((line) => line.trim() === "/.repo-demo-recorder/")
+    ) {
+      fail("prepare did not register /.repo-demo-recorder/ in .git/info/exclude")
+      return
+    }
+    const statusResult = spawnSync("git", ["-C", tempRoot, "status", "--porcelain"], {
+      encoding: "utf8"
+    })
+    if (statusResult.stdout.includes(".repo-demo-recorder")) {
+      fail(
+        `prepare leaked .repo-demo-recorder into main git status:\n${statusResult.stdout}`
+      )
+      return
+    }
+
+    await mkdir(path.join(worktreePath, "docs/recordings"), { recursive: true })
+    await writeFile(path.join(worktreePath, "docs/recordings/smoke.mp4"), "fake")
+    await writeFile(
+      path.join(worktreePath, "docs/recordings/smoke-report.json"),
+      JSON.stringify({ scenario: "smoke" })
+    )
+    await mkdir(path.join(worktreePath, "scripts/recordings"), { recursive: true })
+    await writeFile(path.join(worktreePath, "scripts/recordings/smoke.mjs"), "// runner")
+
+    const cleanupResult = spawnSync(
+      "node",
+      ["scripts/cleanup-recording-worktree.mjs", "--worktree", worktreePath],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (cleanupResult.status !== 0) {
+      fail(
+        `cleanup-recording-worktree.mjs failed:\nstdout=${cleanupResult.stdout}\nstderr=${cleanupResult.stderr}`
+      )
+      return
+    }
+    if (existsSync(worktreePath)) {
+      fail("cleanup did not remove worktreePath")
+      return
+    }
+    if (existsSync(path.join(tempRoot, ".repo-demo-recorder"))) {
+      fail("cleanup did not prune .repo-demo-recorder parent dir")
+      return
+    }
+    if (!existsSync(path.join(tempRoot, "docs/recordings/smoke.mp4"))) {
+      fail("cleanup did not copy docs/recordings back to main work tree")
+      return
+    }
+    if (!existsSync(path.join(tempRoot, "scripts/recordings/smoke.mjs"))) {
+      fail("cleanup did not copy scripts/recordings back to main work tree")
+      return
+    }
+    const excludeAfter = await readFile(path.join(tempRoot, ".git/info/exclude"), "utf8")
+    if (
+      excludeAfter.split(/\r?\n/).some((line) => line.trim() === "/.repo-demo-recorder/")
+    ) {
+      fail("cleanup did not remove /.repo-demo-recorder/ from .git/info/exclude")
+      return
+    }
+    const worktreeList = spawnSync(
+      "git",
+      ["-C", tempRoot, "worktree", "list", "--porcelain"],
+      { encoding: "utf8" }
+    )
+    if (worktreeList.stdout.includes("smoke")) {
+      fail(`git worktree list still references smoke after cleanup:\n${worktreeList.stdout}`)
+      return
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
+async function checkWorktreeRejectsNonGit() {
+  // 不是 git 仓库时必须 fail-fast，明确告诉用户怎么做。
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-no-git-"))
+  try {
+    const result = spawnSync(
+      "node",
+      ["scripts/prepare-recording-worktree.mjs", "--root", tempRoot, "--name", "x"],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (result.status === 0) {
+      fail("prepare-recording-worktree.mjs 应该在非 git 仓库下失败")
+      return
+    }
+    if (!(result.stdout + result.stderr).includes("git")) {
+      fail("prepare 在非 git 仓库下的错误信息应提到 git，便于用户判断")
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
 await checkRequiredFiles()
 await checkSkillFrontmatter()
 await checkScriptSyntax()
@@ -752,9 +1163,14 @@ await checkNpmRunDevSmoke()
 await checkScaffoldInvalidArgs()
 await checkCoverLocalizationSmoke()
 await checkAvoidVisibleTermsSmoke()
+await checkConsoleErrorAllowlistSmoke()
+await checkReviewPageLangSmoke()
+await checkTtsArgValidationSmoke()
 await checkReviewAndHandoffSmoke()
 await checkEmbedCoverSmoke()
 await checkNarrationAndPolishSmoke()
+await checkWorktreeIsolationSmoke()
+await checkWorktreeRejectsNonGit()
 
 if (process.exitCode) {
   process.exit(process.exitCode)

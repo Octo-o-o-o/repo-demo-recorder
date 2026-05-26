@@ -167,19 +167,32 @@ const RECORDER_STYLES = `
   }
 `
 
-const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({
-  viewport: contextViewport,
-  recordVideo: { dir: outputDir, size: videoSize },
-  locale: scenario.language === "en-US" ? "en-US" : "zh-CN",
-  timezoneId: "Asia/Shanghai",
-  isMobile: Boolean(activeSurface.isMobile ?? scenario.device?.isMobile),
-  hasTouch: Boolean(activeSurface.hasTouch ?? scenario.device?.hasTouch),
-  deviceScaleFactor: Number(activeSurface.deviceScaleFactor ?? scenario.device?.deviceScaleFactor ?? 1),
-  userAgent: activeSurface.userAgent || scenario.device?.userAgent || undefined,
-  storageState: scenario.auth?.storageState || undefined
-})
+// 浏览器初始化用 try/catch 包起来：如果 newContext / addInitScript / newPage 中途抛错（例如
+// recordVideo 目录权限错、storageState 文件不存在），上一步已经创建的 browser/context 必须被关掉
+// 才不会留下僵尸 Chromium 进程。
+let browser = null
+let context = null
+try {
+  browser = await chromium.launch({ headless: true })
+  context = await browser.newContext({
+    viewport: contextViewport,
+    recordVideo: { dir: outputDir, size: videoSize },
+    locale: scenario.language === "en-US" ? "en-US" : "zh-CN",
+    timezoneId: "Asia/Shanghai",
+    isMobile: Boolean(activeSurface.isMobile ?? scenario.device?.isMobile),
+    hasTouch: Boolean(activeSurface.hasTouch ?? scenario.device?.hasTouch),
+    deviceScaleFactor: Number(activeSurface.deviceScaleFactor ?? scenario.device?.deviceScaleFactor ?? 1),
+    userAgent: activeSurface.userAgent || scenario.device?.userAgent || undefined,
+    storageState: scenario.auth?.storageState || undefined
+  })
+} catch (error) {
+  if (context) await context.close().catch(() => {})
+  if (browser) await browser.close().catch(() => {})
+  throw error
+}
 
+let page = null
+try {
 // 每个新文档加载后自动重装 overlay（避免 navigation 清空 window.__recorder）
 await context.addInitScript((styles) => {
   if (window.__recorderInstalled) return
@@ -265,7 +278,12 @@ await context.addInitScript((styles) => {
   }
 }, RECORDER_STYLES)
 
-const page = await context.newPage()
+page = await context.newPage()
+} catch (error) {
+  if (context) await context.close().catch(() => {})
+  if (browser) await browser.close().catch(() => {})
+  throw error
+}
 const videoT0 = performance.now()
 const elapsed = () => Math.max(0, Math.round(performance.now() - videoT0))
 
@@ -380,7 +398,18 @@ async function waitForServer(url, timeoutMs = 120_000) {
 
 async function ensureServer() {
   const healthUrl = new URL(scenario.server?.healthPath || "/", scenario.baseUrl).toString()
-  if (await isServing(healthUrl)) return
+  if (await isServing(healthUrl)) {
+    // 历史踩坑：端口被另一个无关项目占用时，isServing 依然返回 true（任何 <500 都算 serving），
+    // 然后 runner 跳过启动新 server，最终把"另一个项目"录进了视频，且因为是录到了别人，
+    // 用户事后追查也很难定位。这里给一条明确警告，让用户能立刻意识到差异。
+    console.warn(
+      `[recorder] 已检测到 ${healthUrl} 响应（<500），跳过启动 scenario.server.command。\n` +
+        `  如果该端口当前监听的是其它项目（不是本 scenario 所在仓库的 dev server），请：\n` +
+        `  1) 关闭占用端口的进程，或者 2) 改 scenario.baseUrl 到一个空闲端口（推荐用 \`PORT=xxxx ${scenario.server?.command || "npm run dev"}\` 启动）。\n` +
+        `  否则录到的内容可能与你预期不一致。`
+    )
+    return
+  }
   if (!scenario.server?.command) {
     throw new Error(`No server is listening at ${healthUrl}, and scenario.server.command is empty`)
   }

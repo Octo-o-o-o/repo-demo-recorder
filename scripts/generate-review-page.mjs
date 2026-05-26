@@ -156,9 +156,12 @@ const coverHref = toHref(args.cover, outPath)
 const coverSheetHref = toHref(args.coverCandidates ? path.join(args.coverCandidates, "contact-sheet.png") : null, outPath)
 const frameSheetHref = toHref(args.frameReview ? path.join(args.frameReview, "contact-sheet.png") : null, outPath)
 const title = args.title || `${report.title || report.scenario || report.name || "Demo"} Review`
+// html lang 跟随 report.language；之前一律 lang="en" 让 zh-CN 项目的浏览器朗读器、a11y 工具
+// 把页面当英文处理，搜索引擎也会误判。BCP-47 形如 "zh-CN" 直接可用。
+const htmlLang = String(report.language || "").trim() || "en"
 
 const html = `<!doctype html>
-<html lang="en">
+<html lang="${htmlEscape(htmlLang)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">

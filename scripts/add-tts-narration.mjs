@@ -97,6 +97,17 @@ Options:
   if (!PAD_MODES.has(args.padMode)) {
     throw new Error(`--pad-mode 仅支持 ${[...PAD_MODES].join("/")}，收到：${args.padMode}`)
   }
+  // 历史上这里没校验 --video-crf；用户传 9999 会被 ffmpeg 拒绝得很不直观（"qp must be between 0 and 51"），
+  // 而且只有走 padded filter 重编码时才会触发。提前 fail-fast 给个清晰错误。
+  if (!Number.isFinite(args.videoCrf) || args.videoCrf < 0 || args.videoCrf > 51) {
+    throw new Error("--video-crf 必须在 0-51 之间")
+  }
+  if (typeof args.videoPreset !== "string" || !args.videoPreset.trim()) {
+    throw new Error("--video-preset 必须是 ffmpeg x264 preset 名（如 veryfast）")
+  }
+  if (typeof args.videoCodec !== "string" || !args.videoCodec.trim()) {
+    throw new Error("--video-codec 必须是 ffmpeg 视频编码器名（如 libx264）")
+  }
 
   return args
 }
