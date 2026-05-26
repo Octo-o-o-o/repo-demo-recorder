@@ -16,6 +16,8 @@ const DEFAULTS = {
   audience: "qa-proof",
   polish: "formal-delivery",
   surface: "auto",
+  dataMode: "mock",
+  allowProduction: false,
   force: false
 }
 
@@ -198,6 +200,13 @@ Options:
   --audience <kind>      customer | internal-review | qa-proof | training | release-pr
   --polish <level>       quick-proof | formal-delivery | customer-ready
   --surface <surface>    auto | desktop | mobile | tablet | multi (default: auto)
+  --data-mode <mode>     mock | staging | production (default: mock)
+                         mock: local dev + seeded fixtures, safe to record/share.
+                         staging: staging tenant + demo account; provide auth.storageState.
+                         production: real customer data; REQUIRES --allow-production
+                         and locks the scenario to readonly with a strict checklist.
+  --allow-production     Confirm you have written authorization to record against
+                         production data. Without this flag --data-mode production fails.
   --out <dir>            Output docs dir (default: docs/recordings)
   --force                Overwrite generated files
 `)
@@ -210,6 +219,10 @@ Options:
 
     if (token === "--force") {
       args.force = true
+      continue
+    }
+    if (token === "--allow-production") {
+      args.allowProduction = true
       continue
     }
 
@@ -269,6 +282,33 @@ Options:
   if (!allowedSubtitles.has(args.subtitles)) {
     throw new Error(
       `--subtitles must be one of: ${Array.from(allowedSubtitles).join(", ")} (received: ${args.subtitles})`
+    )
+  }
+  // data-mode 是 MUST-ASK 项，强制三选一；production 必须配合 --allow-production，否则 fail-fast。
+  // 这条 gate 比其它 enum 更严，因为录到生产数据是合规事故，不允许"默认通过"。
+  const allowedDataModes = new Set(["mock", "staging", "production"])
+  if (!allowedDataModes.has(args.dataMode)) {
+    throw new Error(
+      `--data-mode must be one of: ${Array.from(allowedDataModes).join(", ")} (received: ${args.dataMode})\n` +
+        `  mock: local dev + seeded fixtures (default, safe).\n` +
+        `  staging: staging tenant + demo account.\n` +
+        `  production: real customer data; needs --allow-production.`
+    )
+  }
+  if (args.dataMode === "production" && !args.allowProduction) {
+    throw new Error(
+      `--data-mode production requires --allow-production.\n` +
+        `  Recording against real customer data is a compliance-sensitive action. Confirm:\n` +
+        `    1) You have written authorization from the data owner (customer or DPO).\n` +
+        `    2) The scenario will be readonly (no UI writes, no destructive clicks).\n` +
+        `    3) No third-party customer data will be visible in the frame.\n` +
+        `  When all three are true, re-run with --data-mode production --allow-production.\n` +
+        `  Otherwise use --data-mode mock (local dev) or --data-mode staging (demo tenant).`
+    )
+  }
+  if (args.dataMode !== "production" && args.allowProduction) {
+    throw new Error(
+      `--allow-production only makes sense with --data-mode production (got --data-mode ${args.dataMode}).`
     )
   }
 
@@ -532,21 +572,40 @@ function buildScenario(args, detection = null) {
     // auth 字段保留 storageState（runner 唯一会读的字段）；mode/endpoint/payload 留作人工 review 提示，
     // 仅在 dev-login 流程里手动填充。runner 不会自动调用 endpoint。
     auth: {
-      mode: "manual-or-dev-login",
+      mode: args.dataMode === "mock" ? "dev-login-or-storage-state" : "storage-state-required",
+      // staging / production 模式必须用 storageState；mock 模式可以走 dev-login 或 storageState。
+      // scaffold 默认值 null，用户必须在 RECORDING_GUIDE 指引下生成 storageState 并填进来。
       storageState: null,
       // 如果你的项目有 dev-login API，可补 endpoint/payload，并在 flow.steps 中加一段
       // { type: "goto", url: endpoint } 或自定义脚本去调用 fetch；runner 不会自动用它们。
       endpoint: null,
       payload: null
     },
-    data: {
-      strategy: args.flows.some((flow) => flow.includes("data")) ? "ui-write" : "readonly",
-      // backupCommand 仅在写入型录屏前提示用户运行；不会被 runner 自动调用。请改成项目实际的备份命令或设为 null。
-      backupCommand: null,
-      seedCommand: null,
-      demoPrefix: isZh ? "演示" : "demo",
-      cleanup: false
-    },
+    data: (() => {
+      // data.mode 是 MUST-ASK 项，控制后续整条流水线的安全边界。
+      // - mock: 本地 dev + seeded fixtures；可以任意 UI 写入、可以 cleanup。
+      // - staging: staging 租户；写入只允许在演示账号下；不要 cleanup（多人共用）。
+      // - production: 真实生产数据；强制 readonly；禁止任何 UI 写入，强制写入合规清单。
+      const writeFlow = args.flows.some((flow) => flow.includes("data"))
+      const isProd = args.dataMode === "production"
+      return {
+        mode: args.dataMode,
+        // production 强制 readonly；其它模式按 flows 推断（含 data 类 flow → ui-write）。
+        strategy: isProd ? "readonly" : writeFlow ? "ui-write" : "readonly",
+        // production 禁止 cleanup（不能去碰真实数据）；mock 在写入型 flow 下默认 cleanup。
+        cleanup: isProd ? false : writeFlow && args.dataMode === "mock",
+        // backupCommand 仅在写入型录屏前提示用户运行；不会被 runner 自动调用。请改成项目实际的备份命令或设为 null。
+        backupCommand: null,
+        seedCommand: null,
+        demoPrefix: isZh ? "演示" : "demo",
+        // production 模式带一条强提醒，写入 scenario 让人审 scenario 时一眼看到。
+        productionWarning: isProd
+          ? (isZh
+              ? "⚠️ 此 scenario 录制真实生产数据。开录前必须有数据拥有者书面授权，全程 readonly，画面不得出现其他客户数据。"
+              : "⚠️ This scenario records against production data. Recording requires written authorization, must remain readonly, and must never expose other customers' data on screen.")
+          : null
+      }
+    })(),
     server: {
       // 由 scaffold 自动检测 packageManager + dev script；检测不到时回退到 "npm run dev"。
       command: detection?.devCommand || "npm run dev",
@@ -688,6 +747,98 @@ function buildScenario(args, detection = null) {
   }
 }
 
+// 把 data-mode 的录前准备清单做成可独立测试的 helper。每种 mode 的工作流差异很大：
+// - mock：本地 dev 启动 + seed/fixture + dev-login，安全可发版。
+// - staging：staging 租户登录、预备演示账号、storageState 落地，禁止 cleanup。
+// - production：合规优先，必须 readonly，必须有书面授权，必须遮蔽他人数据。
+function buildDataModeSection(mode, scenario, isEn) {
+  if (mode === "production") {
+    if (isEn) {
+      return `## Data Source: Production ⚠️
+
+This scenario records against **real production data**. Recording is allowed only when ALL of the following are true:
+
+1. Written authorization from the data owner (customer / DPO) exists and is on file.
+2. The flow stays **strictly readonly** — no clicks that submit forms, no \`type=fill\` followed by Save, no destructive actions. \`scenario.data.strategy\` is locked to \`readonly\` and \`scenario.data.cleanup=false\`.
+3. The frame never exposes other tenants' data. Switch to the authorizing customer's tenant before recording; double-check the URL and tenant switcher are correct in the very first frame.
+4. Real PII (emails, phone numbers, ID numbers, financial figures) that is not part of the authorized scope must be blurred or covered by overlays in post.
+5. Auth uses an account explicitly approved for the demo — never a random employee account. Provide \`auth.storageState\` (recommended) or a dev-login token; do not type real passwords on camera.
+6. The frame review contact sheet must be eyeballed before sharing — any accidental PII triggers a rerecord, not a redaction in post.
+
+Do not record production data when any of the above is unclear. Re-scaffold with \`--data-mode staging\` (recommended) or \`--data-mode mock\` (safest) instead.`
+    }
+    return `## 数据来源：production（真实生产数据） ⚠️
+
+本场景将录制**真实生产数据**。只有同时满足以下所有条件才允许开录：
+
+1. 已取得数据拥有者（客户 / DPO）的**书面授权**并存档。
+2. 全程**严格 readonly**——不点击任何提交按钮、不在表单后点保存、不做删除/归档/导出等破坏性动作。\`scenario.data.strategy\` 已锁定为 \`readonly\`，\`scenario.data.cleanup=false\`。
+3. 画面绝不能出现其他租户的数据。开录前切换到授权客户的租户，第一帧就检查 URL、租户切换器是否正确。
+4. 授权范围之外的真实 PII（邮箱、手机号、身份证号、金额）必须在后期用 overlay 遮蔽或马赛克。
+5. 账号必须是**专门用于本次 demo 的授权账号**，不要用员工随手账号。提供 \`auth.storageState\`（推荐）或 dev-login token；不要在镜头前输入真实密码。
+6. frame-review contact sheet 必须**人眼复查**后再分享。任何意外露出 PII 都应**重录**，不要靠后期遮挡。
+
+只要有一条不确定，**不要录**。改用 \`--data-mode staging\`（推荐）或 \`--data-mode mock\`（最安全）重新 scaffold。`
+  }
+  if (mode === "staging") {
+    if (isEn) {
+      return `## Data Source: Staging
+
+This scenario records against a **staging / pre-prod environment** with a dedicated demo account and demo tenant. Setup checklist:
+
+1. \`scenario.baseUrl\` points to the staging host (e.g. \`https://staging.example.com\`). Update it if scaffold guessed wrong from \`localhost\`.
+2. Provide \`scenario.auth.storageState\` — a JSON file produced by Playwright after logging in once:
+   \`\`\`bash
+   node -e "(async()=>{const{chromium}=await import('playwright');const b=await chromium.launch({headless:false});const c=await b.newContext();const p=await c.newPage();await p.goto('https://staging.example.com/login');console.log('Log in manually, then press Enter…');await new Promise(r=>process.stdin.once('data',r));await c.storageState({path:'./.auth/demo-staging.json'});await b.close()})()"
+   \`\`\`
+   Save the file outside the repo or under \`.auth/\` (gitignored). Then set \`scenario.auth.storageState\` to that absolute path.
+3. The demo account should own a fully seeded tenant. Confirm dashboards, lists, and detail pages are populated before recording — empty states make for a weak demo.
+4. \`scenario.data.cleanup=false\` because the staging tenant is shared; do not delete records after the recording.
+5. Customer-facing recordings should not leak staging-only warnings, dev banners, or feature flags. Disable or hide them via the demo account's settings before recording.`
+    }
+    return `## 数据来源：staging（测试环境 + 演示账号）
+
+本场景录制 **staging / pre-prod 环境**，使用专门的演示账号和演示租户。准备清单：
+
+1. \`scenario.baseUrl\` 指向 staging 域名（例如 \`https://staging.example.com\`）。如果 scaffold 默认填了 \`localhost\`，请手动改。
+2. 提供 \`scenario.auth.storageState\`——Playwright 登录一次后导出的 JSON 文件：
+   \`\`\`bash
+   node -e "(async()=>{const{chromium}=await import('playwright');const b=await chromium.launch({headless:false});const c=await b.newContext();const p=await c.newPage();await p.goto('https://staging.example.com/login');console.log('请手动登录，完成后按回车…');await new Promise(r=>process.stdin.once('data',r));await c.storageState({path:'./.auth/demo-staging.json'});await b.close()})()"
+   \`\`\`
+   文件保存到仓库外，或 \`.auth/\`（要加进 .gitignore）。然后把绝对路径写到 \`scenario.auth.storageState\`。
+3. 演示账号应拥有已 seed 好的演示租户。开录前先确认 dashboard、列表、详情都有数据——空状态会让 demo 看起来很弱。
+4. \`scenario.data.cleanup=false\`，因为 staging 租户是共享的，录完不要清数据。
+5. 客户演示不应露出 staging-only 的 warning banner、dev 标记或未发布 feature flag。开录前在演示账号设置里关掉或隐藏。`
+  }
+  // mock（默认）
+  if (isEn) {
+    return `## Data Source: Mock (local dev + seeded fixtures)
+
+This scenario runs **locally** with seeded fixtures. Setup checklist:
+
+1. \`scenario.server.command\` (\`${scenario.server?.command || "npm run dev"}\`) starts the dev server. If the project also needs PostgreSQL / Redis / workers / external services, start them manually before \`node scripts/recordings/<name>.mjs\`.
+2. Seed demo data **once** before recording. Common patterns:
+   - Prisma: \`pnpm prisma db seed\` with a script that creates one demo user + a tenant full of representative records.
+   - SQL / Drizzle: \`psql -f scripts/recordings/seed.sql\`.
+   - In-memory: a route handler that wraps Next API routes for the duration of the demo (\`scripts/recordings/<name>-mock-server.mjs\`).
+3. If the product requires login, generate \`scenario.auth.storageState\` so the runner enters the dashboard without a manual login flow. For projects with email OTP, hit \`/api/auth/send-code\` then \`/api/auth/verify-code\` directly from Node (the dev fallback usually logs the OTP to the server console). Save the resulting cookies into a JSON storage-state file and point \`auth.storageState\` at it.
+4. Mock recordings can safely use \`scenario.data.strategy=ui-write\` and \`cleanup=true\`. Add \`flow.steps\` for fill/click/waitForApi as needed.
+5. Captions and narration can mention "示例 / sample / demo data" but should **not** mention \`mock\`, \`fixture\`, \`renderer-only\`, internal boundary names, or dev warnings (already enforced by \`narrative.avoidVisibleTerms\`).`
+  }
+  return `## 数据来源：mock（本地 dev + seeded 演示数据）
+
+本场景在**本地**运行，演示数据由 seed 脚本 / fixture 提供。准备清单：
+
+1. \`scenario.server.command\`（\`${scenario.server?.command || "npm run dev"}\`）会启动 dev server。如果项目还需要 PostgreSQL / Redis / worker / 外部服务，请在跑 \`node scripts/recordings/<name>.mjs\` 之前手动起好。
+2. 录制前**一次性** seed 演示数据。常见做法：
+   - Prisma：\`pnpm prisma db seed\`，seed 脚本里建一个演示用户 + 一个数据齐全的演示租户。
+   - SQL / Drizzle：\`psql -f scripts/recordings/seed.sql\`。
+   - 内存拦截：用一个 route handler 包住 Next API 路由（\`scripts/recordings/<name>-mock-server.mjs\`），仅在 demo 期间生效。
+3. 如果产品需要登录，**生成 \`scenario.auth.storageState\`** 让 runner 直接以登录态进入 dashboard，不用录"手动登录"那一段。对邮箱 OTP 项目：直接从 Node 调 \`/api/auth/send-code\` + \`/api/auth/verify-code\`（dev fallback 通常会把 OTP 打到 server console 而不是真发邮件），把拿到的 cookie 保存成 storageState JSON，指给 \`auth.storageState\` 用。
+4. mock 模式可以放心 \`scenario.data.strategy=ui-write\` 和 \`cleanup=true\`。在 \`flow.steps\` 里按需加 fill/click/waitForApi。
+5. 字幕和旁白可以提"示例数据 / 演示账号"，但**不要**说 \`mock\`、\`fixture\`、\`renderer-only\`、内部边界、dev warning 等内部词（\`narrative.avoidVisibleTerms\` 会强制校验）。`
+}
+
 function buildGuide(args, scenario, scenarioPath, scriptPath) {
   const videoSize = scenario.recording?.videoSize || scenario.viewport || { width: 1440, height: 960 }
   const coverSize = scenario.cover || { width: 1280, height: 720 }
@@ -727,8 +878,11 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
       ? "Replace `scenario.data.backupCommand` with the project's real backup command (e.g. `docker compose exec db pg_dump ... > backup.sql`) and run it manually before recording. The default is `null` and the runner will not back up automatically."
       : "把 `scenario.data.backupCommand` 改成你项目里实际的备份命令（例如 `docker compose exec db pg_dump ... > backup.sql`），并在录屏前手动执行；当前默认是 null，runner 不会自动备份。"
 
+  const dataMode = scenario.data?.mode || args.dataMode
+  const dataModeSection = buildDataModeSection(dataMode, scenario, isEn)
+
   if (isEn) return buildGuideEn(args, scenario, scenarioPath, scriptPath, {
-    videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint
+    videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint, dataMode, dataModeSection
   })
 
   return `# 录屏说明
@@ -746,6 +900,9 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
 - 端类型：\`${surfaceText}\`
 - 视频尺寸：\`${videoSize.width}x${videoSize.height}\`
 - 封面尺寸：\`${coverSize.width}x${coverSize.height}\`
+- **数据来源**：\`${dataMode}\`
+
+${dataModeSection}
 
 ## 录制前
 
@@ -880,7 +1037,7 @@ ${isPortrait ? "- 竖屏手机视频的字幕使用底部安全区，但必须�
 }
 
 function buildGuideEn(args, scenario, scenarioPath, scriptPath, ctx) {
-  const { videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint } = ctx
+  const { videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint, dataMode, dataModeSection } = ctx
   return `# Recording Guide
 
 ## Overview
@@ -896,6 +1053,9 @@ function buildGuideEn(args, scenario, scenarioPath, scriptPath, ctx) {
 - Surface: \`${surfaceText}\`
 - Video size: \`${videoSize.width}x${videoSize.height}\`
 - Cover size: \`${coverSize.width}x${coverSize.height}\`
+- **Data source**: \`${dataMode}\`
+
+${dataModeSection}
 
 ## Before Recording
 

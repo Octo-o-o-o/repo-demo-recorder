@@ -641,6 +641,138 @@ async function checkAvoidVisibleTermsSmoke() {
   }
 }
 
+async function checkDataModeSmoke() {
+  // 数据来源 / 录制环境（mock|staging|production）是 MUST-ASK 项。
+  // 这一组 smoke 覆盖：默认 mock、staging、production 的三种行为，
+  // 以及 production 没有 --allow-production 时必须 fail-fast。
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-data-mode-"))
+  try {
+    // 1) 默认 mock：scenario.data.mode == mock，auth.mode 表达"可走 dev-login"
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "mock-default",
+      "--audience", "customer",
+      "--polish", "formal-delivery",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--force"
+    ])
+    const mockScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/mock-default.scenario.json"), "utf8"))
+    if (mockScenario.data?.mode !== "mock") fail(`默认 scaffold 应当写入 data.mode=mock，得到 ${mockScenario.data?.mode}`)
+    if (mockScenario.auth?.mode?.includes("storage-state-required")) {
+      fail("mock 模式下 auth.mode 不应该强制 storage-state-required")
+    }
+    if (mockScenario.data?.productionWarning) {
+      fail("mock 模式不应该带 productionWarning")
+    }
+    const mockGuide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!/数据来源：mock|Data Source: Mock/.test(mockGuide)) {
+      fail("mock 模式 RECORDING_GUIDE 应当包含『数据来源：mock』章节")
+    }
+
+    // 2) staging：data.mode=staging，guide 包含 storageState 引导
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "staging-demo",
+      "--data-mode", "staging",
+      "--audience", "qa-proof",
+      "--polish", "formal-delivery",
+      "--flows", "core",
+      "--base-url", "https://staging.example.com",
+      "--force"
+    ])
+    const stagingScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/staging-demo.scenario.json"), "utf8"))
+    if (stagingScenario.data?.mode !== "staging") fail(`staging scaffold 应当写入 data.mode=staging，得到 ${stagingScenario.data?.mode}`)
+    if (stagingScenario.auth?.mode !== "storage-state-required") {
+      fail(`staging 模式 auth.mode 应当是 storage-state-required，得到 ${stagingScenario.auth?.mode}`)
+    }
+    const stagingGuide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!/storageState|storage-state/.test(stagingGuide)) {
+      fail("staging RECORDING_GUIDE 必须包含 storageState 准备步骤")
+    }
+
+    // 3) production 但没 --allow-production：必须 fail-fast，错误信息提到合规
+    const prodNoAllow = spawnSync(
+      "node",
+      [
+        "scripts/scaffold-repo-demo.mjs",
+        "--root", tempRoot,
+        "--name", "prod-fail",
+        "--data-mode", "production",
+        "--audience", "customer",
+        "--polish", "customer-ready",
+        "--flows", "core",
+        "--base-url", "https://app.example.com",
+        "--force"
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (prodNoAllow.status === 0) {
+      fail("production 没有 --allow-production 时必须 fail，但成功了")
+    }
+    if (!(prodNoAllow.stdout + prodNoAllow.stderr).includes("--allow-production")) {
+      fail("production fail-fast 时应在错误里提示 --allow-production")
+    }
+
+    // 4) production + --allow-production：成功，但 scenario.data.productionWarning 必须存在
+    //    strategy 必须强制 readonly，cleanup=false
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "prod-allowed",
+      "--data-mode", "production",
+      "--allow-production",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--flows", "core,add-data",
+      "--base-url", "https://app.example.com",
+      "--force"
+    ])
+    const prodScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/prod-allowed.scenario.json"), "utf8"))
+    if (prodScenario.data?.mode !== "production") {
+      fail(`production scaffold 应当写入 data.mode=production，得到 ${prodScenario.data?.mode}`)
+    }
+    if (prodScenario.data?.strategy !== "readonly") {
+      fail(`production 模式必须强制 data.strategy=readonly（即使 flows 含 data 类型），得到 ${prodScenario.data?.strategy}`)
+    }
+    if (prodScenario.data?.cleanup !== false) {
+      fail("production 模式 data.cleanup 必须为 false")
+    }
+    if (!prodScenario.data?.productionWarning) {
+      fail("production scenario 必须带 data.productionWarning 字段")
+    }
+    const prodGuide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!/⚠️/.test(prodGuide) || !/书面授权|written authorization/.test(prodGuide)) {
+      fail("production RECORDING_GUIDE 必须包含合规警告（⚠️ + 书面授权）")
+    }
+
+    // 5) --allow-production 不带 --data-mode production：应当 fail
+    const allowMisuse = spawnSync(
+      "node",
+      [
+        "scripts/scaffold-repo-demo.mjs",
+        "--root", tempRoot,
+        "--name", "misuse",
+        "--data-mode", "mock",
+        "--allow-production",
+        "--audience", "customer",
+        "--polish", "customer-ready",
+        "--flows", "core",
+        "--base-url", "http://localhost:3000",
+        "--force"
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (allowMisuse.status === 0) {
+      fail("--allow-production 没配合 --data-mode production 时必须 fail")
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
 async function checkConsoleErrorAllowlistSmoke() {
   // allowedConsoleErrors 应当同时匹配 message.text 和 message.location.url；
   // 历史上只匹配 message.text，"Failed to load resource ... 401" 这种 chromium 输出永远命不中
@@ -1179,6 +1311,7 @@ await checkNpmRunDevSmoke()
 await checkScaffoldInvalidArgs()
 await checkCoverLocalizationSmoke()
 await checkAvoidVisibleTermsSmoke()
+await checkDataModeSmoke()
 await checkConsoleErrorAllowlistSmoke()
 await checkReviewPageLangSmoke()
 await checkTtsArgValidationSmoke()
