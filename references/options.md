@@ -16,6 +16,16 @@
 - `formal-delivery`：正式交付。默认分段录制、逐段 review、TTS 或解说稿、媒体校验、关键帧截图。
 - `customer-ready`：客户可发版。在正式交付基础上，必须检查客户口径、字幕遮挡、章节横幅过渡、音量和最终时长；建议输出 frame-review contact sheet。
 
+## 端类型 / Surface
+
+- `desktop`：桌面端横屏录制，默认 viewport/video 为 1440×960，封面 1280×720。
+- `mobile`：手机端竖屏录制，默认页面 viewport 为 390×844，视频输出为 1080×1920，封面 1080×1920。
+- `tablet`：平板端录制，默认 viewport 为 820×1180，视频输出为 1080×1440。
+- `multi`：多端项目。建议为桌面端和手机版分别生成独立视频与封面；手机版仍使用 `mobile` 的竖屏字幕、竖屏封面和竖屏质量门禁。
+- `auto`：只有 `mobile` flow 时自动使用手机端；否则默认桌面端。
+
+手机端视频不应直接套用桌面字幕和 16:9 封面。字幕要避开底部导航、输入框、系统安全区；封面应使用 9:16 竖屏模板。
+
 ## 字幕
 
 - `none`：不加字幕。适合纯 QA 证据。
@@ -44,7 +54,7 @@
 ## 封面
 
 - `none`：不生成封面。只适合临时 QA 证据。
-- `standard`：生成一张 16:9 PNG，默认 1280×720。
+- `standard`：生成一张标准 PNG；桌面默认 16:9（1280×720），手机默认 9:16（1080×1920）。
 - `with-candidates`：先生成 4-6 张候选封面和 contact sheet，再输出最终封面。正式交付默认。
 - `multi-size`：生成 1280×720 与 1920×1080。适合公开视频平台或销售素材库。
 
@@ -54,6 +64,13 @@
 - 右侧：真实录屏抽帧作为产品窗口主视觉。
 - 背景：同一抽帧模糊暗化，保证标题可读。
 - 候选帧：优先 Home、Dashboard、核心结果页；避开登录页、设置页、loading、错误页和信息过密页面。
+
+手机客户封面建议：
+
+- 顶部：产品名和演示主题。
+- 中部：真实手机 UI 截图或 H5 移动界面，尽量完整露出首屏。
+- 底部：价值短句和视频类型。
+- 输出尺寸默认 1080×1920，候选 contact sheet 使用竖屏缩略图。
 
 ## 字幕语言
 
@@ -153,6 +170,8 @@
   "style": "qa-proof",
   "outputs": ["mp4", "webm", "report-json", "final-screenshot", "guide-md"],
   "viewport": { "width": 1440, "height": 960 },
+  "surface": "desktop",
+  "recording": { "videoSize": { "width": 1440, "height": 960 }, "orientation": "landscape" },
   "mediaValidation": { "requireAudio": false, "minDurationRatio": 0.98, "minAudioMaxDb": -50 },
   "highlight": { "enabled": true, "holdMs": 320, "clearBeforeAction": true },
   "overlay": { "animation": "safe-opacity", "settleMs": 160, "chapterBanner": false },

@@ -13,6 +13,17 @@
   "subtitles": "open",
   "audience": "customer",
   "polish": "formal-delivery",
+  "surface": "desktop",
+  "primarySurface": "desktop",
+  "surfaces": {
+    "desktop": {
+      "viewport": { "width": 1440, "height": 960 },
+      "videoSize": { "width": 1440, "height": 960 },
+      "isMobile": false,
+      "hasTouch": false,
+      "deviceScaleFactor": 1
+    }
+  },
   "narrative": {
     "angle": "customer-value",
     "avoidVisibleTerms": ["mock", "fixture", "renderer-only", "内部边界"],
@@ -32,6 +43,16 @@
   },
   "style": "qa-proof",
   "viewport": { "width": 1440, "height": 960 },
+  "recording": {
+    "videoSize": { "width": 1440, "height": 960 },
+    "orientation": "landscape"
+  },
+  "device": {
+    "isMobile": false,
+    "hasTouch": false,
+    "deviceScaleFactor": 1,
+    "userAgent": null
+  },
   "overlay": {
     "animation": "safe-opacity",
     "settleMs": 160,
@@ -117,6 +138,35 @@
 - `narrative.angle`: `customer-value` 时，caption 和 narration 应先说明客户收益，再说明机制；内部实现词放进 report/guide，不进入画面。
 - `narrative.avoidVisibleTerms`: 用于人工或脚本 review，避免客户可见字幕/旁白出现内部词。
 
+## Surface / Recording 字段
+
+- `surface`: 当前场景的主端类型，常用 `desktop`、`mobile`、`tablet`、`multi`。
+- `primarySurface`: 当前脚本实际录制的端类型。多端项目建议分别生成桌面和手机两个脚本，不把横屏桌面和竖屏手机硬拼成一个主视频。
+- `surfaces`: 端类型预设表。脚本会优先读取 `surfaces[primarySurface]` 的 viewport、视频尺寸和设备仿真参数。
+- `viewport`: 页面实际渲染尺寸。手机端默认 `390x844`。
+- `recording.videoSize`: Playwright 录屏输出尺寸。桌面默认 `1440x960`；手机默认 `1080x1920`。
+- `recording.orientation`: `landscape` 或 `portrait`，用于封面、字幕和质量门禁。
+- `device`: Playwright context 的移动端仿真参数；手机端应启用 `isMobile`、`hasTouch` 和合适的 `deviceScaleFactor/userAgent`。
+
+手机版示例：
+
+```json
+{
+  "surface": "mobile",
+  "primarySurface": "mobile",
+  "viewport": { "width": 390, "height": 844 },
+  "recording": {
+    "videoSize": { "width": 1080, "height": 1920 },
+    "orientation": "portrait"
+  },
+  "device": {
+    "isMobile": true,
+    "hasTouch": true,
+    "deviceScaleFactor": 3
+  }
+}
+```
+
 ## Overlay 字段
 
 - `animation=safe-opacity`：固定位置，只做短时透明度变化；显示稳定后再记录 caption 时间。正式交付默认。
@@ -138,17 +188,18 @@
 - `enabled=true`：正式交付默认生成封面。
 - `mode=standard`：直接生成最终封面。
 - `mode=with-candidates`：生成候选封面 contact sheet，再输出最终封面。客户可发版推荐。
-- `width/height`：默认 1280×720，保持 16:9。
+- `width/height`：桌面默认 1280×720，保持 16:9；手机默认 1080×1920，保持 9:16。
 - `timestamp=auto`：从 report 中优先选择 Home/Dashboard/工作台相关 cue；否则取视频前 22% 左右的画面。也可显式传 `00:00:36`。
 - `title/subtitle/line/badge`：客户可见文案；客户演示不要出现 mock/fixture/dev warning 等内部词。
 
-标准客户封面应该用真实录屏抽帧作为主视觉，左侧保留清晰标题，右侧展示产品 UI。不要用设置页、登录页、loading 或信息过密页面做默认封面。
+标准客户封面应该用真实录屏抽帧作为主视觉。桌面封面默认左侧保留清晰标题、右侧展示产品 UI；手机封面默认顶部标题、中部手机 UI、底部价值短句。不要用设置页、登录页、loading 或信息过密页面做默认封面。
 
 ## Flow 字段
 
 ```json
 {
   "id": "create-source",
+  "surface": "desktop",
   "route": "/sources/new/manual",
   "caption": {
     "title": "新增数据源",
@@ -199,7 +250,7 @@ caption 或 step 可以加 `narration` 覆盖解说文案。没有该字段时�
 
 ```json
 {
-  "source": { "durationSeconds": 72.4, "video": { "width": 1440, "height": 900 } },
+  "source": { "durationSeconds": 72.4, "video": { "width": 1440, "height": 960 } },
   "output": {
     "durationSeconds": 72.4,
     "audioStreams": 1,
@@ -209,7 +260,7 @@ caption 或 step 可以加 `narration` 覆盖解说文案。没有该字段时�
 }
 ```
 
-媒体校验失败时不要只重跑合成命令；先检查 report captions 是否过密、TTS voice 是否可用、音频是否被错误 mute、输出是否被 `-t` 截短，以及 narration-report 中的 `timeline.totalPaddingMs` 是否触发了冻结帧扩展（如果是，源视频时长 ≠ 输出时长，校验时要用 `expectedDurationMs`）。TTS 脚本生成的 `cues[].endMs` 应覆盖该段真实语音时长与 `padBufferMs`，不能停留在原始字幕的短时长。
+媒体校验失败时不要只重跑合成命令；先检查 report captions 是否过密、TTS voice 是否可用、音频是否被错误 mute、输出是否被 `-t` 截短、竖屏场景是否仍被错误导出为横屏，以及 narration-report 中的 `timeline.totalPaddingMs` 是否触发了冻结帧扩展（如果是，源视频时长 ≠ 输出时长，校验时要用 `expectedDurationMs`）。TTS 脚本生成的 `cues[].endMs` 应覆盖该段真实语音时长与 `padBufferMs`，不能停留在原始字幕的短时长。
 
 ## 断言要求
 

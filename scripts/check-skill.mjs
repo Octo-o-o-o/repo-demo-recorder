@@ -91,6 +91,48 @@ async function checkScaffoldSmoke() {
     if (scenario.audience !== "customer") fail("Scaffold did not preserve audience=customer")
     if (scenario.overlay?.animation !== "safe-opacity") fail("Scaffold did not default to safe overlay")
     if (!scenario.review?.writeFrameReview) fail("Scaffold did not enable frame review for customer-ready")
+
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root",
+      tempRoot,
+      "--name",
+      "mobile-demo",
+      "--surface",
+      "mobile",
+      "--audience",
+      "customer",
+      "--polish",
+      "customer-ready",
+      "--flows",
+      "mobile",
+      "--force"
+    ])
+    run("node", ["--check", path.join(tempRoot, "scripts/recordings/mobile-demo.mjs")], {
+      cwd: tempRoot
+    })
+    const mobileScenario = JSON.parse(
+      await readFile(path.join(tempRoot, "docs/recordings/mobile-demo.scenario.json"), "utf8")
+    )
+    if (mobileScenario.primarySurface !== "mobile") fail("Mobile scaffold did not set primarySurface=mobile")
+    if (mobileScenario.viewport?.width !== 390 || mobileScenario.viewport?.height !== 844) {
+      fail("Mobile scaffold did not set 390x844 viewport")
+    }
+    if (
+      mobileScenario.recording?.videoSize?.width !== 1080 ||
+      mobileScenario.recording?.videoSize?.height !== 1920
+    ) {
+      fail("Mobile scaffold did not set 1080x1920 video size")
+    }
+    if (mobileScenario.cover?.width !== 1080 || mobileScenario.cover?.height !== 1920) {
+      fail("Mobile scaffold did not set 1080x1920 cover size")
+    }
+    if (mobileScenario.overlay?.captionPosition !== "bottom-center") {
+      fail("Mobile scaffold did not use bottom-center captions")
+    }
+    if (!mobileScenario.device?.isMobile || !mobileScenario.device?.hasTouch) {
+      fail("Mobile scaffold did not enable mobile/touch device settings")
+    }
   } finally {
     await rm(tempRoot, { recursive: true, force: true })
   }

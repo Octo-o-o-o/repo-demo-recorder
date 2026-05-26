@@ -40,15 +40,16 @@ Options:
   --badge <text>              Badge text, e.g. CUSTOMER DEMO
   --timestamp <time|auto>     Frame time: 36, 00:00:36, or auto
   --candidates-dir <dir>      Generate candidate covers and contact-sheet.png
-  --width <px>                Output width (default: 1280)
-  --height <px>               Output height (default: 720)
-  --theme <name>              customer | proof | training
+  --width <px>                Output width (default: 1280; mobile theme default: 1080)
+  --height <px>               Output height (default: 720; mobile theme default: 1920)
+  --theme <name>              customer | proof | training | mobile
   --keep-temp                 Keep extracted frame files
 `)
     process.exit(0)
   }
 
   const args = { ...DEFAULTS }
+  const provided = new Set()
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
     if (token === "--keep-temp") {
@@ -60,11 +61,16 @@ Options:
     if (!value || value.startsWith("--")) throw new Error(`Missing value for ${token}`)
     const key = token.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase())
     args[key] = value
+    provided.add(key)
     index += 1
   }
 
   if (!args.video) throw new Error("Missing --video <mp4/webm>")
   if (!args.out) throw new Error("Missing --out <cover.png>")
+  if (args.theme === "mobile") {
+    if (!provided.has("width")) args.width = 1080
+    if (!provided.has("height")) args.height = 1920
+  }
   args.width = Number(args.width)
   args.height = Number(args.height)
   if (!Number.isFinite(args.width) || args.width < 320) throw new Error("--width must be >= 320")
@@ -121,13 +127,26 @@ function inferText(report, args) {
     .map((cue) => cue.title)
     .slice(0, 3)
 
+  const isPortrait = Number(args.height) > Number(args.width)
   return {
     title: args.title || report?.title || "Product Demo",
-    subtitle: args.subtitle || (args.theme === "customer" ? "Customer-ready product walkthrough" : "Verified product walkthrough"),
+    subtitle:
+      args.subtitle ||
+      (args.theme === "mobile" || isPortrait
+        ? "Mobile product walkthrough"
+        : args.theme === "customer"
+          ? "Customer-ready product walkthrough"
+          : "Verified product walkthrough"),
     line: args.line || meaningful.join(" · ") || "Scripted recording · Captions · Quality report",
     badge:
       args.badge ||
-      (args.theme === "customer" ? "CUSTOMER DEMO" : args.theme === "training" ? "TRAINING" : "VERIFIED DEMO")
+      (args.theme === "mobile" || isPortrait
+        ? "MOBILE DEMO"
+        : args.theme === "customer"
+          ? "CUSTOMER DEMO"
+          : args.theme === "training"
+            ? "TRAINING"
+            : "VERIFIED DEMO")
   }
 }
 
@@ -162,6 +181,7 @@ async function dataUrl(filePath) {
 }
 
 function coverHtml({ src, text, width, height }) {
+  if (height > width) return portraitCoverHtml({ src, text, width, height })
   const title = escapeHtml(text.title)
   const subtitle = escapeHtml(text.subtitle)
   const line = escapeHtml(text.line)
@@ -195,6 +215,38 @@ h2{margin:${Math.round(height * 0.039)}px 0 0;font-size:${subtitleSize}px;line-h
 </div></body></html>`
 }
 
+function portraitCoverHtml({ src, text, width, height }) {
+  const title = escapeHtml(text.title)
+  const subtitle = escapeHtml(text.subtitle)
+  const line = escapeHtml(text.line)
+  const badge = escapeHtml(text.badge)
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}
+body{margin:0;width:${width}px;height:${height}px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","STHeiti","Segoe UI",sans-serif;background:#101612}
+.cover{position:relative;width:${width}px;height:${height}px;color:#fff}
+.bg{position:absolute;inset:-42px;background-image:url('${src}');background-size:cover;background-position:center;filter:blur(18px) saturate(.86);transform:scale(1.06);opacity:.78}
+.shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,18,13,.96) 0%,rgba(8,18,13,.78) 28%,rgba(8,18,13,.38) 58%,rgba(8,18,13,.90) 100%)}
+.border{position:absolute;inset:42px;border:1px solid rgba(255,255,255,.14);border-radius:34px}
+.copy{position:absolute;left:70px;right:70px;top:92px;text-align:left}
+.badge{display:inline-flex;padding:14px 19px;border-radius:999px;background:rgba(62,126,86,.9);color:#e8fff0;font-size:28px;font-weight:750;letter-spacing:.035em}
+h1{margin:70px 0 0;font-size:92px;line-height:1.02;letter-spacing:0;font-weight:850}
+h2{margin:34px 0 0;font-size:42px;line-height:1.24;letter-spacing:0;font-weight:760;color:rgba(248,250,247,.96)}
+.line{margin-top:24px;font-size:28px;line-height:1.45;color:rgba(230,239,232,.84)}
+.accent{margin-top:36px;width:360px;height:6px;border-radius:999px;background:linear-gradient(90deg,#60b57a,#c4d9bf)}
+.phoneWrap{position:absolute;left:230px;right:230px;top:690px;height:1040px;border-radius:54px;box-shadow:0 44px 118px rgba(0,0,0,.46);background:rgba(255,255,255,.10);padding:18px}
+.phoneTop{height:38px;border-radius:34px 34px 0 0;background:rgba(242,245,239,.90);display:flex;align-items:center;justify-content:center}
+.speaker{width:118px;height:9px;border-radius:999px;background:rgba(49,95,68,.35)}
+.screen{width:100%;height:calc(100% - 38px);object-fit:cover;object-position:center top;display:block;border-radius:0 0 34px 34px;border:1px solid rgba(255,255,255,.70);border-top:0;background:#f8f8f3}
+.footer{position:absolute;left:72px;right:72px;bottom:86px;color:rgba(236,245,238,.72);font-size:25px;line-height:1.4}
+</style></head><body><div class="cover">
+<div class="bg"></div><div class="shade"></div><div class="border"></div>
+<section class="copy"><div class="badge">${badge}</div><h1>${title}</h1><h2>${subtitle}</h2><div class="line">${line}</div><div class="accent"></div></section>
+<div class="phoneWrap"><div class="phoneTop"><span class="speaker"></span></div><img class="screen" src="${src}" /></div>
+<div class="footer">Portrait-ready product walkthrough</div>
+</div></body></html>`
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -225,24 +277,27 @@ async function loadChromium() {
   }
 }
 
-async function makeContactSheet(page, images, outPath) {
+async function makeContactSheet(page, images, outPath, args) {
   if (images.length === 0) return
   const columns = Math.min(3, images.length)
   const rows = Math.ceil(images.length / columns)
+  const portrait = Number(args.height) > Number(args.width)
+  const tileWidth = portrait ? 240 : 426
+  const tileHeight = portrait ? 426 : 240
   const tiles = []
   for (const [index, image] of images.entries()) {
     tiles.push(`<figure><img src="${await dataUrl(image)}"><figcaption>Candidate ${index + 1}</figcaption></figure>`)
   }
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     body{margin:0;background:#f6f7f4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    .sheet{display:grid;grid-template-columns:repeat(${columns},426px);gap:12px;padding:12px;width:${columns * 426 + (columns - 1) * 12 + 24}px}
+    .sheet{display:grid;grid-template-columns:repeat(${columns},${tileWidth}px);gap:12px;padding:12px;width:${columns * tileWidth + (columns - 1) * 12 + 24}px}
     figure{margin:0;background:white;border:1px solid rgba(30,40,34,.18);border-radius:8px;overflow:hidden;box-shadow:0 10px 28px rgba(30,40,34,.10)}
-    img{display:block;width:426px;height:240px;object-fit:cover}
+    img{display:block;width:${tileWidth}px;height:${tileHeight}px;object-fit:cover}
     figcaption{padding:7px 10px 9px;font-size:13px;color:#33423a}
   </style></head><body><div class="sheet">${tiles.join("")}</div></body></html>`
   await page.setViewportSize({
-    width: columns * 426 + (columns - 1) * 12 + 24,
-    height: rows * (240 + 38) + (rows - 1) * 12 + 24
+    width: columns * tileWidth + (columns - 1) * 12 + 24,
+    height: rows * (tileHeight + 38) + (rows - 1) * 12 + 24
   })
   await page.setContent(html, { waitUntil: "networkidle" })
   await page.screenshot({ path: outPath })
@@ -286,7 +341,7 @@ try {
       candidateMeta.push({ index: index + 1, ratio, seconds, frame, cover })
     }
     const contactSheet = path.join(candidatesDir, "contact-sheet.png")
-    await makeContactSheet(page, candidateImages, contactSheet)
+    await makeContactSheet(page, candidateImages, contactSheet, args)
     candidates = { dir: candidatesDir, contactSheet, items: candidateMeta }
     await writeFile(path.join(candidatesDir, "cover-candidates.json"), `${JSON.stringify(candidates, null, 2)}\n`)
   }
@@ -301,6 +356,8 @@ try {
         output: outputPath,
         width: args.width,
         height: args.height,
+        orientation: args.height > args.width ? "portrait" : "landscape",
+        theme: args.theme,
         timestampSeconds: selectedTime,
         text,
         candidates

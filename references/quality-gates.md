@@ -14,10 +14,12 @@
   - 当 `--pad-mode freeze`（默认）启用时，输出时长 = 源时长 + 各超时 cue 的 padding 之和，可能 > 100%；要校验 `outputDurationMs` 与 narration-report 里的 `expectedDurationMs` 偏差 ≤ 2% 或 ≤ 500ms（脚本内部已 fail-fast）。
   - 当 `--pad-mode none`，输出时长应等于源时长，且不应短于 98%。
 - 带解说视频必须通过非静音校验：`ffmpeg volumedetect` 的 `max_volume` 默认高于 `-50 dB`。
-- 视频尺寸、帧率、codec 必须写入 media report；正式桌面录屏默认校验 `1440x900` 或项目约定 viewport。
+- 视频尺寸、帧率、codec 必须写入 media report；正式桌面录屏默认校验 `1440x960` 或项目约定 viewport。
+- 手机端或多端中的手机版必须输出竖屏视频，默认校验 `1080x1920`，且 `height > width`。
 - 解说稿必须随产物落地，不能只有合成后的音轨。
-- 正式交付必须生成标准 16:9 封面 PNG；客户可发版必须生成候选封面 contact sheet，并记录最终封面选择理由。
+- 正式交付必须生成标准封面 PNG：桌面端 16:9，手机端 9:16；客户可发版必须生成候选封面 contact sheet，并记录最终封面选择理由。
 - 至少抽 1-3 张关键帧做人眼检查，确认字幕没有遮挡主要控件、表单输入、报告正文或导出结果。
+- 手机端关键帧必须额外检查字幕没有遮挡底部导航、输入框、键盘触发区域和主 CTA；封面不能遮住底部导航或关键按钮。
 - 正式交付或客户可发版必须围绕 caption/chapter 的 `startMs/endMs` 抽取过渡帧，确认没有半截遮罩、位移露出、遮挡关键控件、字体溢出或横幅跳动。
 - 录屏结束后停止本地 dev server，不保留端口监听。
 
@@ -56,6 +58,8 @@
 
 调整字幕到对角位置，缩小宽度，或将字幕写入 sidecar `.vtt/.srt`。不要为了字幕牺牲表单可读性。
 
+手机端优先使用底部安全区全宽字幕，但需要避开底部导航、输入框、键盘、toast 和主 CTA；如果页面本身底部操作密集，把字幕上移到稳定空白区或改用更短字幕。
+
 ### 遮罩只显示一半或出现/收起不丝滑
 
 根因通常是 DOM overlay 用了 `translateY/translateX/scale/clip-path` 做出现/收起动画，录屏采到了动画中间帧。正式交付应改为：
@@ -82,10 +86,20 @@
 
 1. 生成 4-6 张候选封面 contact sheet。
 2. 优先选择 Home/Dashboard/核心结果页作为真实 UI 主视觉。
-3. 输出 1280×720 PNG；公开视频平台可再输出 1920×1080。
-4. 左侧放产品名和演示主题，右侧放真实 UI 截图窗口。
+3. 桌面输出 1280×720 PNG；公开视频平台可再输出 1920×1080。手机输出 1080×1920 PNG。
+4. 桌面左侧放产品名和演示主题，右侧放真实 UI 截图窗口；手机顶部放标题，中部放手机 UI，底部放价值短句。
 5. 背景使用同一抽帧的模糊暗化版本，保证文字对比度。
 6. 记录最终选择理由，便于后续重录复用。
+
+### 手机视频被导出成横屏
+
+常见根因是只设置了页面 viewport，没有设置录屏 `recordVideo.size`，或在多端项目里复用了桌面脚本。修复方式：
+
+1. 场景使用 `surface=mobile`、`viewport=390x844`、`recording.videoSize=1080x1920`。
+2. Playwright context 同时设置 `isMobile=true`、`hasTouch=true`、`deviceScaleFactor=3`。
+3. 质量校验命令传入 `--expect-width 1080 --expect-height 1920`。
+4. 封面命令传入 `--width 1080 --height 1920 --theme mobile`。
+5. 多端项目将桌面版和手机版分开录制、分开审核、分开交付。
 
 ### TTS 解说错位或太密
 
@@ -130,4 +144,18 @@ node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow
   --expect-height 960 \
   --write-media-report docs/recordings/add-data-flow-media-report.json \
   --write-frame-review docs/recordings/add-data-flow-frame-review
+```
+
+手机端：
+
+```bash
+node <skill>/scripts/validate-recording-report.mjs docs/recordings/mobile-demo-report.json \
+  --video docs/recordings/mobile-demo-narrated.mp4 \
+  --source-video docs/recordings/mobile-demo.mp4 \
+  --narration-report docs/recordings/mobile-demo-narrated-narration-report.json \
+  --require-audio \
+  --expect-width 1080 \
+  --expect-height 1920 \
+  --write-media-report docs/recordings/mobile-demo-media-report.json \
+  --write-frame-review docs/recordings/mobile-demo-frame-review
 ```

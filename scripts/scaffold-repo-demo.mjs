@@ -13,6 +13,7 @@ const DEFAULTS = {
   baseUrl: "http://127.0.0.1:3210",
   audience: "qa-proof",
   polish: "formal-delivery",
+  surface: "auto",
   force: false
 }
 
@@ -29,6 +30,7 @@ Options:
   --baseUrl <url>        Local app URL (default: http://127.0.0.1:3210)
   --audience <kind>      customer | internal-review | qa-proof | training | release-pr
   --polish <level>       quick-proof | formal-delivery | customer-ready
+  --surface <surface>    auto | desktop | mobile | tablet | multi (default: auto)
   --out <dir>            Output docs dir (default: docs/recordings)
   --force                Overwrite generated files
 `)
@@ -66,6 +68,11 @@ Options:
 
   if (args.flows.length === 0) {
     args.flows = ["core"]
+  }
+
+  const allowedSurfaces = new Set(["auto", "desktop", "mobile", "tablet", "multi"])
+  if (!allowedSurfaces.has(args.surface)) {
+    throw new Error(`--surface must be one of: ${Array.from(allowedSurfaces).join(", ")}`)
   }
 
   return args
@@ -108,6 +115,41 @@ function buildScenario(args) {
     "empty-error-loading": "空状态、错误状态与加载态",
     mobile: "移动端关键路径"
   }
+  const inferredSurface =
+    args.surface === "auto"
+      ? args.flows.length === 1 && args.flows[0] === "mobile"
+        ? "mobile"
+        : "desktop"
+      : args.surface
+  const primarySurface = inferredSurface === "multi" ? "desktop" : inferredSurface
+  const surfacePresets = {
+    desktop: {
+      viewport: { width: 1440, height: 960 },
+      videoSize: { width: 1440, height: 960 },
+      isMobile: false,
+      hasTouch: false,
+      deviceScaleFactor: 1
+    },
+    mobile: {
+      viewport: { width: 390, height: 844 },
+      videoSize: { width: 1080, height: 1920 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    },
+    tablet: {
+      viewport: { width: 820, height: 1180 },
+      videoSize: { width: 1080, height: 1440 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 2
+    }
+  }
+  const activeSurface = surfacePresets[primarySurface] || surfacePresets.desktop
+  const isPortrait = activeSurface.videoSize.height > activeSurface.videoSize.width
+  const isMobile = primarySurface === "mobile"
 
   return {
     name: args.name,
@@ -115,6 +157,12 @@ function buildScenario(args) {
     baseUrl: args.baseUrl,
     language: args.language,
     subtitles: args.subtitles,
+    surface: inferredSurface,
+    surfaces:
+      inferredSurface === "multi"
+        ? surfacePresets
+        : { [primarySurface]: activeSurface },
+    primarySurface,
     audience: args.audience,
     polish: args.polish,
     narrative: {
@@ -146,29 +194,47 @@ function buildScenario(args) {
       maxPaddingMs: 60000
     },
     style: "qa-proof",
-    viewport: { width: 1440, height: 960 },
+    viewport: activeSurface.viewport,
+    recording: {
+      videoSize: activeSurface.videoSize,
+      orientation: isPortrait ? "portrait" : "landscape"
+    },
+    device: {
+      isMobile: activeSurface.isMobile,
+      hasTouch: activeSurface.hasTouch,
+      deviceScaleFactor: activeSurface.deviceScaleFactor,
+      userAgent: activeSurface.userAgent || null
+    },
     overlay: {
       animation: "safe-opacity",
       settleMs: 160,
       chapterBanner: args.audience === "customer",
       chapterPosition: "top-center",
-      captionPosition: "bottom-left"
+      captionPosition: isPortrait ? "bottom-center" : "bottom-left"
     },
     cover: {
       enabled: args.polish !== "quick-proof",
       mode: args.polish === "quick-proof" ? "standard" : "with-candidates",
-      width: 1280,
-      height: 720,
+      width: isPortrait ? 1080 : 1280,
+      height: isPortrait ? 1920 : 720,
       title: args.audience === "customer" ? "Product Demo" : `${flowLabels[args.flows[0]] || "项目演示"}`,
       subtitle:
-        args.audience === "customer" ? "Customer-ready product walkthrough" : "Verified product walkthrough",
+        args.audience === "customer"
+          ? isMobile
+            ? "Mobile product walkthrough"
+            : "Customer-ready product walkthrough"
+          : "Verified product walkthrough",
       line:
         args.audience === "customer"
-          ? "Home · Search · Automation"
+          ? isMobile
+            ? "Portrait UI · Touch flow · Mobile captions"
+            : "Home · Search · Automation"
           : "Scripted recording · Captions · Quality report",
       badge:
         args.audience === "customer"
-          ? "CUSTOMER DEMO"
+          ? isMobile
+            ? "MOBILE DEMO"
+            : "CUSTOMER DEMO"
           : args.audience === "training"
             ? "TRAINING"
             : "VERIFIED DEMO",
@@ -227,12 +293,13 @@ function buildScenario(args) {
         requireAudio: false,
         minDurationRatio: 0.98,
         minAudioMaxDb: -50,
-        expectWidth: 1440,
-        expectHeight: 960
+        expectWidth: activeSurface.videoSize.width,
+        expectHeight: activeSurface.videoSize.height
       }
     },
     flows: args.flows.map((flow) => ({
       id: flow,
+      surface: flow === "mobile" ? "mobile" : primarySurface,
       route: "/",
       caption: {
         title: flowLabels[flow] || flow,
@@ -257,7 +324,24 @@ function buildScenario(args) {
   }
 }
 
-function buildGuide(args, scenarioPath, scriptPath) {
+function buildGuide(args, scenario, scenarioPath, scriptPath) {
+  const videoSize = scenario.recording?.videoSize || scenario.viewport || { width: 1440, height: 960 }
+  const coverSize = scenario.cover || { width: 1280, height: 720 }
+  const isPortrait = Number(videoSize.height) > Number(videoSize.width)
+  const surfaceText =
+    scenario.primarySurface === "mobile"
+      ? "手机端竖屏"
+      : scenario.primarySurface === "tablet"
+        ? "平板端"
+        : "桌面端横屏"
+  const coverRatioText = Number(coverSize.height) > Number(coverSize.width) ? "9:16 竖屏" : "16:9 横屏"
+  const coverSubtitle =
+    scenario.primarySurface === "mobile"
+      ? "Mobile product walkthrough"
+      : args.audience === "customer"
+        ? "Customer-ready product walkthrough"
+        : "Verified product walkthrough"
+
   return `# 录屏说明
 
 ## 基本信息
@@ -270,6 +354,9 @@ function buildGuide(args, scenarioPath, scriptPath) {
 - 业务流程：\`${args.flows.join(", ")}\`
 - 目标观众：\`${args.audience}\`
 - 精修级别：\`${args.polish}\`
+- 端类型：\`${surfaceText}\`
+- 视频尺寸：\`${videoSize.width}x${videoSize.height}\`
+- 封面尺寸：\`${coverSize.width}x${coverSize.height}\`
 
 ## 录制前
 
@@ -278,6 +365,7 @@ function buildGuide(args, scenarioPath, scriptPath) {
 3. 补齐场景 JSON 里的 route、selector、API 断言、DB 断言和字幕文案。
 4. 避免真实客户数据、真实密码、token、邮箱验证码入镜。
 5. 如果目标观众是客户，字幕和旁白先讲客户价值，再讲可控机制；不要把 mock、fixture、临时脚本、dev warning 等内部词放进画面。
+6. 如果项目同时有桌面端和手机版，手机版单独录制竖屏版本；不要把桌面横屏视频直接裁成手机视频。
 
 ## 录制
 
@@ -296,10 +384,10 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 
 ## 生成封面
 
-正式交付建议生成标准 16:9 封面，并先查看候选图：
+正式交付建议生成标准 ${coverRatioText} 封面，并先查看候选图：
 
 \`\`\`bash
-node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-cover.png --title "${args.audience === "customer" ? "Product Demo" : "Verified Demo"}" --subtitle "${args.audience === "customer" ? "Customer-ready product walkthrough" : "Verified product walkthrough"}" --candidates-dir ${args.out}/${args.name}-cover-candidates
+node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-cover.png --title "${args.audience === "customer" ? "Product Demo" : "Verified Demo"}" --subtitle "${coverSubtitle}" --width ${coverSize.width} --height ${coverSize.height} --theme ${scenario.primarySurface === "mobile" ? "mobile" : args.audience === "training" ? "training" : args.audience === "customer" ? "customer" : "proof"} --candidates-dir ${args.out}/${args.name}-cover-candidates
 \`\`\`
 
 检查 \`${args.out}/${args.name}-cover-candidates/contact-sheet.png\` 后，如果自动选择的画面不够代表产品主线，使用 \`--timestamp 00:00:36\` 指定更合适的帧重新生成。
@@ -307,13 +395,13 @@ node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-n
 ## 质量门禁
 
 \`\`\`bash
-node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --require-audio --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --require-audio --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
 \`\`\`
 
 如果使用默认 TTS 输出名，建议把 narration report 一并纳入时长校验：
 
 \`\`\`bash
-node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --require-audio --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --require-audio --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
 \`\`\`
 
 ## 字幕原则
@@ -321,6 +409,7 @@ node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-repo
 - 说明这一页能解决什么业务问题，不解释脚本细节。
 - 每条字幕控制在 1-2 行，避开表单输入区和主按钮。
 - 高亮只用于引导视线，点击/输入前必须清除。
+${isPortrait ? "- 竖屏手机视频的字幕使用底部安全区，但必须避开底部导航、输入框和主 CTA。\n" : ""}
 
 ## 画面专业度
 
@@ -356,6 +445,7 @@ const report = {
   createdAt: new Date().toISOString(),
   baseUrl: scenario.baseUrl,
   scenario: scenario.name,
+  surface: scenario.surface || scenario.primarySurface || "desktop",
   language: scenario.language,
   subtitles: scenario.subtitles,
   demoData: {},
@@ -369,6 +459,15 @@ const wantsOpenCaptions = ["open", "both"].includes(scenario.subtitles)
 const wantsAnyCaptions = scenario.subtitles !== "none"
 const overlaySettleMs = Number(scenario.overlay?.settleMs ?? 160)
 let startedServer = null
+const activeSurface =
+  scenario.surfaces?.[scenario.primarySurface || scenario.surface] ||
+  scenario.surfaces?.[scenario.surface] ||
+  {
+    viewport: scenario.viewport || { width: 1440, height: 960 },
+    videoSize: scenario.recording?.videoSize || scenario.viewport || { width: 1440, height: 960 }
+  }
+const contextViewport = activeSurface.viewport || scenario.viewport || { width: 1440, height: 960 }
+const videoSize = activeSurface.videoSize || scenario.recording?.videoSize || contextViewport
 
 const RECORDER_STYLES = \`
   [data-recorder-chapter] {
@@ -449,14 +548,50 @@ const RECORDER_STYLES = \`
     pointer-events: none;
     transition: opacity 120ms ease;
   }
+  @media (max-width: 640px) {
+    [data-recorder-chapter] {
+      left: 14px;
+      right: 14px;
+      top: max(14px, env(safe-area-inset-top));
+      transform: none;
+      width: auto;
+      padding: 12px 14px 13px 17px;
+      border-left-width: 4px;
+      border-radius: 8px;
+    }
+    [data-recorder-chapter] strong {
+      font-size: 18px;
+      line-height: 1.18;
+    }
+    [data-recorder-caption] {
+      left: 14px;
+      right: 14px;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      max-width: none;
+      padding: 11px 13px 12px;
+      border-left: 0;
+      border-top: 3px solid #0f62fe;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    [data-recorder-caption] strong {
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+  }
 \`
 
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({
-  viewport: scenario.viewport || { width: 1440, height: 960 },
-  recordVideo: { dir: outputDir, size: scenario.viewport || { width: 1440, height: 960 } },
+  viewport: contextViewport,
+  recordVideo: { dir: outputDir, size: videoSize },
   locale: scenario.language === "en-US" ? "en-US" : "zh-CN",
   timezoneId: "Asia/Shanghai",
+  isMobile: Boolean(activeSurface.isMobile ?? scenario.device?.isMobile),
+  hasTouch: Boolean(activeSurface.hasTouch ?? scenario.device?.hasTouch),
+  deviceScaleFactor: Number(activeSurface.deviceScaleFactor ?? scenario.device?.deviceScaleFactor ?? 1),
+  userAgent: activeSurface.userAgent || scenario.device?.userAgent || undefined,
   storageState: scenario.auth?.storageState || undefined
 })
 
@@ -936,17 +1071,18 @@ const scenarioRelativePath = path.relative(root, scenarioPath)
 const scriptRelativePath = path.relative(root, scriptPath)
 const guideRelativePath = path.relative(root, guidePath)
 const scriptToRootRelative = path.relative(path.dirname(scriptPath), root) || "."
+const scenario = buildScenario(args)
 
-await writeNew(scenarioPath, `${JSON.stringify(buildScenario(args), null, 2)}\n`, args.force)
+await writeNew(scenarioPath, `${JSON.stringify(scenario, null, 2)}\n`, args.force)
 await writeNew(scriptPath, buildRunner(scenarioRelativePath, scriptToRootRelative), args.force)
 
 const guideExists = await exists(guidePath)
 let guideAction = "skipped"
 if (!guideExists) {
-  await writeFile(guidePath, buildGuide(args, scenarioRelativePath, scriptRelativePath))
+  await writeFile(guidePath, buildGuide(args, scenario, scenarioRelativePath, scriptRelativePath))
   guideAction = "created"
 } else if (args.force) {
-  await writeFile(guidePath, buildGuide(args, scenarioRelativePath, scriptRelativePath))
+  await writeFile(guidePath, buildGuide(args, scenario, scenarioRelativePath, scriptRelativePath))
   guideAction = "overwritten"
 }
 

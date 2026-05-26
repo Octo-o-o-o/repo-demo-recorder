@@ -10,7 +10,7 @@ It is designed for repository-native demo work where a video should be repeatabl
 - Scaffold scenario JSON, a Playwright recorder, and a recording guide.
 - Record stable MP4/WebM walkthroughs with open captions and optional sidecar subtitles.
 - Add TTS narration with automatic freeze-frame padding when speech is longer than the original cue window.
-- Generate standard 16:9 video covers from real recording frames, including candidate contact sheets.
+- Generate standard video covers from real recording frames: 16:9 for desktop demos, 9:16 for mobile demos, including candidate contact sheets.
 - Validate page errors, response errors, horizontal overflow, audio presence, audio volume, video dimensions, and narration timing.
 - Generate frame-review contact sheets around caption/chapter transitions so overlays do not look half-rendered or unprofessional.
 
@@ -66,7 +66,21 @@ node ~/.codex/skills/repo-demo-recorder/scripts/scaffold-repo-demo.mjs \
   --name customer-demo \
   --audience customer \
   --polish customer-ready \
-  --flows core,mobile \
+  --flows core,add-data \
+  --base-url http://127.0.0.1:3210 \
+  --subtitles both
+```
+
+For a pure mobile product, or the mobile part of a multi-surface product, scaffold a separate portrait recording:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/scaffold-repo-demo.mjs \
+  --root . \
+  --name mobile-customer-demo \
+  --surface mobile \
+  --audience customer \
+  --polish customer-ready \
+  --flows mobile \
   --base-url http://127.0.0.1:3210 \
   --subtitles both
 ```
@@ -129,6 +143,21 @@ node ~/.codex/skills/repo-demo-recorder/scripts/generate-video-cover.mjs \
   --candidates-dir docs/recordings/customer-demo-cover-candidates
 ```
 
+Generate a mobile portrait cover:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/generate-video-cover.mjs \
+  --video docs/recordings/mobile-customer-demo-narrated.mp4 \
+  --report docs/recordings/mobile-customer-demo-report.json \
+  --out docs/recordings/mobile-customer-demo-cover.png \
+  --title "Mobile Product Demo" \
+  --subtitle "Mobile product walkthrough" \
+  --width 1080 \
+  --height 1920 \
+  --theme mobile \
+  --candidates-dir docs/recordings/mobile-customer-demo-cover-candidates
+```
+
 Review:
 
 ```text
@@ -145,7 +174,8 @@ For customer-ready demos, the skill now defaults toward:
 - Caption timing that starts only after overlays have settled.
 - TTS freeze-frame padding so narration is not clipped.
 - Media validation plus transition frame review.
-- A standard 1280x720 cover using a real product frame, readable title text, and candidate review.
+- A standard cover using a real product frame, readable title text, and candidate review.
+- Mobile demos use a 390x844 phone viewport, 1080x1920 portrait video, bottom safe-area captions, and a 1080x1920 cover.
 
 ## Command Reference
 
@@ -158,7 +188,7 @@ node scripts/install-skill.mjs --help
 node scripts/check-skill.mjs
 ```
 
-The scripts intentionally fail fast when required inputs are missing, so `--help` is represented by the README and reference files rather than a separate CLI help mode.
+Use `--help` for script-specific options. The scripts intentionally fail fast when required inputs are missing.
 
 ## Repository Layout
 

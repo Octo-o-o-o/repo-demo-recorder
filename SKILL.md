@@ -18,10 +18,11 @@ description: Create verified repository-native product walkthrough recordings wi
 - **字幕语言**：默认跟用户语言一致。选项：`zh-CN`、`en-US`、双语、按页面 locale。
 - **TTS 解说**：默认询问。选项：无解说、本地系统 TTS、云端 TTS、只生成解说稿。确认语言、声音、语速、是否保留原声。
 - **业务流程**：默认覆盖核心流程。选项：核心浏览、添加新数据、编辑/删除、审批/审核、报表/导出、异常/空状态、移动端。
+- **端类型**：默认自动推断。选项：桌面端、手机端、平板端、多端。纯手机版或多端中的手机版必须单独输出适合手机播放的竖屏视频，默认 1080×1920；字幕、章节横幅和封面也按竖屏重新排版。
 - **数据策略**：默认用 mock/seed，并在 DB 写入前备份。选项：只读演示、真实 UI 写入、API seed、Prisma seed、录后清理。
 - **录屏风格**：默认工程验收。选项：工程验收、销售 demo、培训 SOP、发布 PR 证明。
 - **精修级别**：默认正式交付。选项：快速证据、正式交付、客户可发版。正式交付及以上必须分段录制、逐段 review、合并后媒体校验；客户可发版还要抽帧检查字幕/横幅出现和收起的过渡帧。
-- **封面**：正式交付默认生成标准 16:9 封面。客户演示封面应使用真实录屏画面作主视觉，产品名/演示主题第一眼可见，避免用信息过密或偏单一模块的截图；先生成候选 contact sheet，确认后输出最终 cover PNG。
+- **封面**：正式交付默认生成标准封面。桌面端默认 16:9，手机端默认 9:16；客户演示封面应使用真实录屏画面作主视觉，产品名/演示主题第一眼可见，避免用信息过密或偏单一模块的截图；先生成候选 contact sheet，确认后输出最终 cover PNG。
 - **输出**：默认 MP4 + 原始 WebM + report JSON + 指南 MD。可加 GIF、截图、字幕文件、PR/commit 摘要。
 
 更多选项见 `references/options.md`。场景文件结构见 `references/scenario-schema.md`。
@@ -40,6 +41,14 @@ description: Create verified repository-native product walkthrough recordings wi
 10. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
 11. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面选择、复验结果、如何重录。
 12. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
+
+## 端类型规则
+
+- **桌面端**：默认录制横屏，推荐 1440×960 或项目约定尺寸；封面默认 1280×720。
+- **手机端**：默认使用手机 viewport（如 390×844）和竖屏输出（1080×1920）。底部字幕使用全宽安全区，字号更小，章节横幅靠顶部安全区，避免遮住底部导航、输入框和主 CTA。
+- **平板端**：默认使用竖屏或横屏平板尺寸，按实际产品使用场景决定；封面跟随视频方向。
+- **多端项目**：桌面端和手机版应优先分别录制、分别配字幕和封面。不要把横屏桌面和竖屏手机硬拼成一个主视频；如必须合辑，应在每段之间加明确章节，并为手机版片段保留竖屏版本。
+- 如果用户只说“手机版/移动端 App/H5 手机端”，直接使用 mobile surface，不需要再询问横屏尺寸。
 
 ## 叙事规则
 
@@ -63,11 +72,11 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 
 ## 封面规则
 
-- 标准封面输出为 16:9 PNG，默认 1280×720；如面向高清发布，可追加 1920×1080。
+- 桌面标准封面输出为 16:9 PNG，默认 1280×720；手机标准封面输出为 9:16 PNG，默认 1080×1920。
 - 封面必须来自真实录屏抽帧或产品实景，不用纯渐变、抽象插画或无法代表产品的背景。
-- 客户演示封面结构默认：左侧产品名/演示主题/价值短句，右侧真实 UI 截图窗口，背景使用同一截图的模糊暗化版本。
+- 客户演示桌面封面结构默认：左侧产品名/演示主题/价值短句，右侧真实 UI 截图窗口，背景使用同一截图的模糊暗化版本。手机封面结构默认：顶部标题，中部手机 UI 主视觉，底部价值短句。
 - 标题在小尺寸列表页中也要可读；不要超过两行，不使用负 letter spacing，不遮挡 UI 主视觉。
-- 封面帧优先选择能代表整体工作流的入口页、Dashboard、Home 或核心结果页；避免选择设置页、登录页、错误态、loading、信息过密邮件页，除非视频主题就是这些内容。
+- 封面帧优先选择能代表整体工作流的入口页、Dashboard、Home 或核心结果页；手机端优先选择首屏可读、底部导航和主 CTA 不被遮挡的画面。避免选择设置页、登录页、错误态、loading、信息过密邮件页，除非视频主题就是这些内容。
 - 正式交付应生成候选封面 contact sheet，并在 guide/report 中记录最终选择理由。
 
 ## 实现规则
@@ -90,7 +99,7 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 
 - `scripts/scaffold-repo-demo.mjs`：在目标仓库生成场景 JSON、Playwright 脚本骨架、录屏指南。
 - `scripts/add-tts-narration.mjs`：从 report captions 生成 TTS 解说、VTT 解说稿，并合成带解说 MP4；支持 macOS `say` 和 `edge-tts`。
-- `scripts/generate-video-cover.mjs`：从视频抽帧生成标准 16:9 封面，可生成候选封面 contact sheet。
+- `scripts/generate-video-cover.mjs`：从视频抽帧生成标准封面，桌面端 16:9、手机端 9:16，可生成候选封面 contact sheet。
 - `scripts/validate-recording-report.mjs`：校验 report JSON 的高亮、溢出、page error、response allowlist，并可生成字幕/章节过渡抽帧 contact sheet。
 - `scripts/install-skill.mjs`：把本仓库安装到 `$CODEX_HOME/skills/repo-demo-recorder` 或 `~/.codex/skills/repo-demo-recorder`。
 - `scripts/check-skill.mjs`：开源仓库自检，校验必需文件、脚本语法和 scaffold smoke test。
@@ -126,7 +135,9 @@ docs/recordings/
 
 ```bash
 node <skill>/scripts/scaffold-repo-demo.mjs --root . --name add-data-flow --language zh-CN --subtitles open --flows core,add-data
+node <skill>/scripts/scaffold-repo-demo.mjs --root . --name mobile-demo --surface mobile --language zh-CN --subtitles both --flows mobile --audience customer --polish customer-ready
 node <skill>/scripts/add-tts-narration.mjs --video docs/recordings/add-data-flow.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-narrated.mp4 --language zh-CN --engine edge-tts --voice zh-CN-YunyangNeural --pad-mode freeze --pad-buffer-ms 300
 node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-cover.png --title "Product Demo" --subtitle "Customer-ready walkthrough" --candidates-dir docs/recordings/add-data-flow-cover-candidates
+node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/mobile-demo-narrated.mp4 --report docs/recordings/mobile-demo-report.json --out docs/recordings/mobile-demo-cover.png --title "Mobile Demo" --subtitle "Mobile product walkthrough" --width 1080 --height 1920 --theme mobile --candidates-dir docs/recordings/mobile-demo-cover-candidates
 node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --source-video docs/recordings/add-data-flow.mp4 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --require-audio --expect-width 1440 --expect-height 960 --write-media-report docs/recordings/add-data-flow-media-report.json --write-frame-review docs/recordings/add-data-flow-frame-review
 ```

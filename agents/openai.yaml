@@ -1,4 +1,4 @@
 interface:
   display_name: "Repo Demo Recorder"
-  short_description: "为本地项目生成可验证录屏、字幕、自动脚本与报告产物"
+  short_description: "为本地项目生成桌面/移动端可验证录屏、字幕、封面与报告产物"
   default_prompt: "Use $repo-demo-recorder to plan and generate a narrated, verified product walkthrough recording for this repository."
