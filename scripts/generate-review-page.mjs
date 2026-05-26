@@ -117,12 +117,14 @@ function renderCaptions(captions) {
   </table>`
 }
 
-function renderAssetCard(title, href, kind = "image") {
+function renderAssetCard(title, href, kind = "image", options = {}) {
   if (!href) return `<p class="muted">Missing ${htmlEscape(title)}.</p>`
+  const safeHref = htmlEscape(href)
   if (kind === "video") {
-    return `<video src="${href}" controls playsinline></video><p><a href="${href}">${htmlEscape(title)}</a></p>`
+    const poster = options.poster ? ` poster="${htmlEscape(options.poster)}"` : ""
+    return `<video src="${safeHref}" controls playsinline${poster}></video><p><a href="${safeHref}">${htmlEscape(title)}</a></p>`
   }
-  return `<a href="${href}"><img src="${href}" alt="${htmlEscape(title)}"></a><p><a href="${href}">${htmlEscape(title)}</a></p>`
+  return `<a href="${safeHref}"><img src="${safeHref}" alt="${htmlEscape(title)}"></a><p><a href="${safeHref}">${htmlEscape(title)}</a></p>`
 }
 
 function renderJsonBlock(title, json) {
@@ -192,7 +194,7 @@ const html = `<!doctype html>
   <main>
     <section>
       <h2>Final Video</h2>
-      ${renderAssetCard("Final video", finalVideoHref, "video")}
+      ${renderAssetCard("Final video", finalVideoHref, "video", { poster: coverHref })}
       ${sourceVideoHref ? `<details><summary>Source video</summary>${renderAssetCard("Source video", sourceVideoHref, "video")}</details>` : ""}
     </section>
     <section>

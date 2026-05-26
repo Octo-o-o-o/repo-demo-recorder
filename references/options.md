@@ -163,6 +163,9 @@
 - `frame-review`：围绕 caption/chapter 开始和结束时间抽帧，生成 contact sheet，检查字幕遮挡和过渡瑕疵。
 - `cover`：标准封面 PNG。
 - `cover-candidates`：候选封面与 contact sheet。
+- `cover-intro`：把封面写成视频开头的真实画面，解决播放器不显示 `attached_pic` 的情况。
+- `cover-embed-report`：MP4 `attached_pic` 封面嵌入验证报告。
+- `gap-trim-report`：删除封面后空白/loading 片段后的时间轴修正报告。
 - `review-html`：本地审片页。
 - `polished-mp4`：基础包装后的最终交付 MP4。
 - `screen-studio-handoff`：给 Screen Studio 的素材包和操作说明。

@@ -9,6 +9,8 @@
     "repo-demo-add-tts": "./scripts/add-tts-narration.mjs",
     "repo-demo-validate": "./scripts/validate-recording-report.mjs",
     "repo-demo-cover": "./scripts/generate-video-cover.mjs",
+    "repo-demo-embed-cover": "./scripts/embed-video-cover.mjs",
+    "repo-demo-trim-gap": "./scripts/trim-video-gap.mjs",
     "repo-demo-review": "./scripts/generate-review-page.mjs",
     "repo-demo-polish": "./scripts/polish-video.mjs",
     "repo-demo-screen-studio": "./scripts/prepare-screen-studio-handoff.mjs",

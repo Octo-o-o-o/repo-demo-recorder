@@ -14,6 +14,7 @@ Options:
   --source-video <path>             Source video before narration/muxing
   --narration-report <path>         Narration timing report
   --require-audio                   Require a non-silent audio stream
+  --require-cover-art               Require an MP4 attached_pic cover stream
   --expect-width <px>               Expected video width
   --expect-height <px>              Expected video height
   --allow-response <text>           Allow matching response error text
@@ -35,6 +36,7 @@ Options:
     sourceVideo: null,
     narrationReport: null,
     requireAudio: false,
+    requireCoverArt: false,
     minDurationRatio: 0.98,
     maxDurationRatio: null,
     expectedDurationToleranceMs: 500,
@@ -63,6 +65,11 @@ Options:
 
     if (token === "--require-audio") {
       args.requireAudio = true
+      continue
+    }
+
+    if (token === "--require-cover-art") {
+      args.requireCoverArt = true
       continue
     }
 
@@ -182,7 +189,18 @@ function runFfmpeg(commandArgs) {
 }
 
 function firstVideoStream(probe) {
-  return probe.streams?.find((stream) => stream.codec_type === "video") ?? probe.streams?.[0] ?? null
+  return (
+    probe.streams?.find(
+      (stream) => stream.codec_type === "video" && Number(stream.disposition?.attached_pic || 0) !== 1
+    ) ??
+    probe.streams?.find((stream) => stream.codec_type === "video") ??
+    probe.streams?.[0] ??
+    null
+  )
+}
+
+function attachedPictureStreams(probe) {
+  return (probe.streams ?? []).filter((stream) => Number(stream.disposition?.attached_pic || 0) === 1)
 }
 
 function asText(value) {
@@ -339,15 +357,16 @@ function collectFailures(report, args) {
     failures.push("场景要求 DB 落库断言，但 report.dbAssertions 中没有 ok=true")
   }
 
-  if (args.video || args.requireAudio) {
+  if (args.video || args.requireAudio || args.requireCoverArt) {
     if (!args.video) {
-      failures.push("要求音频校验但缺少 --video")
+      failures.push("要求媒体校验但缺少 --video")
     } else {
       try {
         const resolvedVideo = path.resolve(args.video)
         const fullProbe = ffprobe(resolvedVideo)
         const audioProbe = ffprobe(resolvedVideo, "a")
         const videoStream = firstVideoStream(fullProbe)
+        const coverArtStreams = attachedPictureStreams(fullProbe)
         media.output = {
           path: resolvedVideo,
           durationSeconds: Number(fullProbe.format?.duration || 0),
@@ -360,7 +379,15 @@ function collectFailures(report, args) {
                 frameRate: videoStream.r_frame_rate
               }
             : null,
-          audioStreams: audioProbe.streams?.length ?? 0
+          audioStreams: audioProbe.streams?.length ?? 0,
+          coverArtStreams: coverArtStreams.map((stream) => ({
+            index: stream.index,
+            codec: stream.codec_name,
+            width: stream.width,
+            height: stream.height,
+            attachedPic: Number(stream.disposition?.attached_pic || 0) === 1,
+            tags: stream.tags ?? {}
+          }))
         }
         if (!videoStream) {
           failures.push("视频没有 video stream")
@@ -380,8 +407,11 @@ function collectFailures(report, args) {
             failures.push(`音频疑似静音：maxVolumeDb=${volume.maxVolumeDb}, threshold>${args.minAudioMaxDb}`)
           }
         }
+        if (args.requireCoverArt && coverArtStreams.length === 0) {
+          failures.push("视频没有 attached_pic 封面流")
+        }
       } catch (error) {
-        failures.push(`音频流校验失败：${error.message}`)
+        failures.push(`媒体流校验失败：${error.message}`)
       }
     }
   }

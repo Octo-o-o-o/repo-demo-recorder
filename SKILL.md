@@ -37,7 +37,7 @@ description: Create verified repository-native product walkthrough recordings wi
 6. **分段录制真实流程**：操作必须像真实用户；关键页面保留自然停留时间；表单数据要业务化，不要 `test/test`。正式交付默认一段一录、一段一 review；失败或画面不专业时重录该段，不把失败片段合进最终视频。
 7. **补 TTS 解说**：对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成音频并 mux；解说补充业务价值和验收点，不逐字朗读字幕或按钮。旁白时间应从 overlay 稳定后开始。
 8. **质量门禁**：检查 API POST 成功、页面无横向溢出、`pageErrors=[]`、高亮不滞留、允许的 404 有明确 allowlist，并做媒体级校验。
-9. **生成封面**：正式交付生成 `<name>-cover.png` 和 `<name>-cover-report.json`；客户可发版先输出候选封面 contact sheet，再选择最能代表完整产品价值的帧。
+9. **生成并嵌入封面**：正式交付生成 `<name>-cover.png` 和 `<name>-cover-report.json`；客户可发版先输出候选封面 contact sheet，再选择最能代表完整产品价值的帧；最终 MP4 必须用 `embed-video-cover.mjs` 嵌入 `attached_pic` 封面流，并在质量门禁中要求 `--require-cover-art`。如果用户期望“打开视频就看到封面”，还必须加 `--intro-duration-ms 2000` 把封面作为真实开场画面写入视频，并同步后移 narration VTT/report。封面后如果出现 loading/白屏/空白等待，必须用 `trim-video-gap.mjs` 删除空白段，并再次抽帧确认封面后直接进入有效画面。
 10. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
 11. **生成审片页**：正式交付默认生成 review HTML，把视频、字幕时间线、质量门禁、封面候选和过渡帧放在同一页，便于逐段判断是否重录。
 12. **基础包装或专业交接**：skill 只做稳定的背景、尺寸、padding 和导出 preset；需要自然缩放、光标平滑、设备模型、复杂时间线时，生成 Screen Studio handoff 包交给专业软件处理。
@@ -109,6 +109,8 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - `scripts/scaffold-repo-demo.mjs`：在目标仓库生成场景 JSON、Playwright 脚本骨架、录屏指南。
 - `scripts/add-tts-narration.mjs`：从 report captions 生成 TTS 解说、VTT 解说稿，并合成带解说 MP4；支持 macOS `say` 和 `edge-tts`。
 - `scripts/generate-video-cover.mjs`：从视频抽帧生成标准封面，桌面端 16:9、手机端 9:16，可生成候选封面 contact sheet。
+- `scripts/embed-video-cover.mjs`：把封面 PNG 作为 MP4 `attached_pic` 流嵌入最终视频；可用 `--intro-duration-ms` 添加肉眼可见的封面开场，并同步后移 narration VTT/report。
+- `scripts/trim-video-gap.mjs`：删除封面后、转场中或录屏开头的空白片段，并同步后移/前移 narration VTT/report，保留封面流。
 - `scripts/validate-recording-report.mjs`：校验 report JSON 的高亮、溢出、page error、response allowlist，并可生成字幕/章节过渡抽帧 contact sheet。
 - `scripts/generate-review-page.mjs`：生成本地审片 HTML，集中查看视频、字幕时间线、封面候选、frame review 和质量门禁结果。
 - `scripts/polish-video.mjs`：做保守后期包装和导出 preset，包括客户桌面、客户手机、社媒竖屏、QA 证明和 README GIF。
@@ -137,6 +139,8 @@ docs/recordings/
   <flow>-media-report.json
   <flow>-cover.png
   <flow>-cover-report.json
+  <flow>-cover-embed-report.json
+  <flow>-gap-trim-report.json
   <flow>-cover-candidates/
     contact-sheet.png
   <flow>-frame-review/
@@ -157,7 +161,9 @@ node <skill>/scripts/scaffold-repo-demo.mjs --root . --name mobile-demo --surfac
 node <skill>/scripts/add-tts-narration.mjs --video docs/recordings/add-data-flow.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-narrated.mp4 --language zh-CN --engine edge-tts --voice zh-CN-YunyangNeural --pad-mode freeze --pad-buffer-ms 300
 node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --out docs/recordings/add-data-flow-cover.png --title "Product Demo" --subtitle "Customer-ready walkthrough" --candidates-dir docs/recordings/add-data-flow-cover-candidates
 node <skill>/scripts/generate-video-cover.mjs --video docs/recordings/mobile-demo-narrated.mp4 --report docs/recordings/mobile-demo-report.json --out docs/recordings/mobile-demo-cover.png --title "Mobile Demo" --subtitle "Mobile product walkthrough" --width 1080 --height 1920 --theme mobile --candidates-dir docs/recordings/mobile-demo-cover-candidates
-node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --source-video docs/recordings/add-data-flow.mp4 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --require-audio --expect-width 1440 --expect-height 960 --write-media-report docs/recordings/add-data-flow-media-report.json --write-frame-review docs/recordings/add-data-flow-frame-review
+node <skill>/scripts/embed-video-cover.mjs --video docs/recordings/add-data-flow-narrated.mp4 --cover docs/recordings/add-data-flow-cover.png --out docs/recordings/add-data-flow-narrated.mp4 --intro-duration-ms 2000 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --narration-vtt docs/recordings/add-data-flow-narrated-narration.vtt --report docs/recordings/add-data-flow-cover-embed-report.json
+node <skill>/scripts/trim-video-gap.mjs --video docs/recordings/add-data-flow-narrated.mp4 --cover docs/recordings/add-data-flow-cover.png --out docs/recordings/add-data-flow-narrated.mp4 --remove-start-ms 2000 --remove-end-ms 8500 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --narration-vtt docs/recordings/add-data-flow-narrated-narration.vtt --report docs/recordings/add-data-flow-gap-trim-report.json
+node <skill>/scripts/validate-recording-report.mjs docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --source-video docs/recordings/add-data-flow.mp4 --narration-report docs/recordings/add-data-flow-narrated-narration-report.json --require-audio --require-cover-art --expect-width 1440 --expect-height 960 --write-media-report docs/recordings/add-data-flow-media-report.json --write-frame-review docs/recordings/add-data-flow-frame-review
 node <skill>/scripts/generate-review-page.mjs --report docs/recordings/add-data-flow-report.json --video docs/recordings/add-data-flow-narrated.mp4 --media-report docs/recordings/add-data-flow-media-report.json --cover docs/recordings/add-data-flow-cover.png --cover-candidates docs/recordings/add-data-flow-cover-candidates --frame-review docs/recordings/add-data-flow-frame-review --out docs/recordings/add-data-flow-review.html
 node <skill>/scripts/polish-video.mjs --video docs/recordings/add-data-flow-narrated.mp4 --out docs/recordings/add-data-flow-polished.mp4 --preset customer-desktop
 node <skill>/scripts/prepare-screen-studio-handoff.mjs --out docs/recordings/add-data-flow-screen-studio-handoff --target desktop --raw-video docs/recordings/add-data-flow.mp4 --narrated-video docs/recordings/add-data-flow-narrated.mp4 --report docs/recordings/add-data-flow-report.json --vtt docs/recordings/add-data-flow-narrated-narration.vtt --cover docs/recordings/add-data-flow-cover.png

@@ -28,6 +28,11 @@ function run(command, args, options = {}) {
   return result
 }
 
+function commandExists(command) {
+  const result = spawnSync(process.platform === "win32" ? "where" : "which", [command], { encoding: "utf8" })
+  return result.status === 0
+}
+
 async function checkRequiredFiles() {
   for (const filePath of [
     "SKILL.md",
@@ -38,6 +43,8 @@ async function checkRequiredFiles() {
     "scripts/scaffold-repo-demo.mjs",
     "scripts/add-tts-narration.mjs",
     "scripts/generate-video-cover.mjs",
+    "scripts/embed-video-cover.mjs",
+    "scripts/trim-video-gap.mjs",
     "scripts/generate-review-page.mjs",
     "scripts/polish-video.mjs",
     "scripts/prepare-screen-studio-handoff.mjs",
@@ -60,6 +67,8 @@ async function checkScriptSyntax() {
     "scripts/scaffold-repo-demo.mjs",
     "scripts/add-tts-narration.mjs",
     "scripts/generate-video-cover.mjs",
+    "scripts/embed-video-cover.mjs",
+    "scripts/trim-video-gap.mjs",
     "scripts/generate-review-page.mjs",
     "scripts/polish-video.mjs",
     "scripts/prepare-screen-studio-handoff.mjs",
@@ -199,11 +208,124 @@ async function checkReviewAndHandoffSmoke() {
   }
 }
 
+async function checkEmbedCoverSmoke() {
+  if (!commandExists("ffmpeg") || !commandExists("ffprobe")) {
+    console.warn("[check] skipping cover embed smoke because ffmpeg/ffprobe is unavailable")
+    return
+  }
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-cover-"))
+  try {
+    const sourceVideo = path.join(tempRoot, "source.mp4")
+    const cover = path.join(tempRoot, "cover.png")
+    const outputVideo = path.join(tempRoot, "with-cover.mp4")
+    const trimmedVideo = path.join(tempRoot, "trimmed.mp4")
+    const reportPath = path.join(tempRoot, "demo-report.json")
+
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=navy:s=320x180:d=1",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=1000:duration=1",
+      "-shortest",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      sourceVideo
+    ])
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=white:s=640x360",
+      "-frames:v",
+      "1",
+      cover
+    ])
+    await writeFile(
+      reportPath,
+      `${JSON.stringify(
+        {
+          scenario: "cover-smoke",
+          captions: [],
+          steps: [{ label: "start", highlightVisible: false, overflow: 0 }],
+          consoleMessages: [],
+          pageErrors: [],
+          responseErrors: []
+        },
+        null,
+        2
+      )}\n`
+    )
+
+    run("node", [
+      "scripts/embed-video-cover.mjs",
+      "--video",
+      sourceVideo,
+      "--cover",
+      cover,
+      "--out",
+      outputVideo,
+      "--intro-duration-ms",
+      "500"
+    ])
+    run("node", [
+      "scripts/validate-recording-report.mjs",
+      reportPath,
+      "--video",
+      outputVideo,
+      "--require-audio",
+      "--require-cover-art",
+      "--expect-width",
+      "320",
+      "--expect-height",
+      "180"
+    ])
+    run("node", [
+      "scripts/trim-video-gap.mjs",
+      "--video",
+      outputVideo,
+      "--cover",
+      cover,
+      "--out",
+      trimmedVideo,
+      "--remove-start-ms",
+      "500",
+      "--remove-end-ms",
+      "700"
+    ])
+    run("node", [
+      "scripts/validate-recording-report.mjs",
+      reportPath,
+      "--video",
+      trimmedVideo,
+      "--require-audio",
+      "--require-cover-art",
+      "--expect-width",
+      "320",
+      "--expect-height",
+      "180"
+    ])
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
 await checkRequiredFiles()
 await checkSkillFrontmatter()
 await checkScriptSyntax()
 await checkScaffoldSmoke()
 await checkReviewAndHandoffSmoke()
+await checkEmbedCoverSmoke()
 
 if (process.exitCode) {
   process.exit(process.exitCode)

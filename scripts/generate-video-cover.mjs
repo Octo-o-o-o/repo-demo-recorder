@@ -196,13 +196,13 @@ body{margin:0;width:${width}px;height:${height}px;overflow:hidden;font-family:-a
 .bg{position:absolute;inset:-28px;background-image:url('${src}');background-size:cover;background-position:center;filter:blur(14px) saturate(.86);transform:scale(1.04);opacity:.74}
 .shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(8,18,13,.93) 0%,rgba(8,18,13,.80) 34%,rgba(8,18,13,.42) 61%,rgba(8,18,13,.70) 100%)}
 .border{position:absolute;inset:42px;border:1px solid rgba(255,255,255,.14);border-radius:18px}
-.copy{position:absolute;left:6%;top:13%;width:34%}
+.copy{position:absolute;left:6%;top:13%;width:31%}
 .badge{display:inline-flex;padding:10px 14px;border-radius:999px;background:rgba(62,126,86,.88);color:#e8fff0;font-size:${Math.round(width * 0.0156)}px;font-weight:700;letter-spacing:.04em}
-h1{margin:${Math.round(height * 0.105)}px 0 0;font-size:${headlineSize}px;line-height:1.02;letter-spacing:0;font-weight:800}
+h1{margin:${Math.round(height * 0.105)}px 0 0;font-size:${headlineSize}px;line-height:1.02;letter-spacing:0;font-weight:800;overflow-wrap:break-word}
 h2{margin:${Math.round(height * 0.039)}px 0 0;font-size:${subtitleSize}px;line-height:1.25;letter-spacing:0;font-weight:700;color:rgba(248,250,247,.96)}
 .line{margin-top:${Math.round(height * 0.039)}px;font-size:${Math.round(width * 0.018)}px;line-height:1.45;color:rgba(230,239,232,.84)}
 .accent{margin-top:${Math.round(height * 0.058)}px;width:72%;height:5px;border-radius:999px;background:linear-gradient(90deg,#60b57a,#c4d9bf)}
-.screenWrap{position:absolute;right:4.4%;top:14.4%;width:59.4%;height:71.1%;border-radius:18px;box-shadow:0 36px 96px rgba(0,0,0,.42);background:rgba(255,255,255,.08);padding:10px}
+.screenWrap{position:absolute;right:4.4%;top:14.4%;width:56%;height:71.1%;border-radius:18px;box-shadow:0 36px 96px rgba(0,0,0,.42);background:rgba(255,255,255,.08);padding:10px}
 .screenBar{height:22px;border-radius:12px 12px 0 0;background:rgba(242,245,239,.88);display:flex;align-items:center;gap:7px;padding-left:13px}
 .dot{width:8px;height:8px;border-radius:50%;background:#315f44;opacity:.55}
 .screen{width:100%;height:calc(100% - 22px);object-fit:cover;object-position:center;display:block;border-radius:0 0 12px 12px;border:1px solid rgba(255,255,255,.68);border-top:0}

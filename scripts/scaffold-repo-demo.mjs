@@ -278,7 +278,10 @@ function buildScenario(args) {
       polishedMp4: args.polish === "customer-ready",
       screenStudioHandoff: false,
       coverImage: args.polish !== "quick-proof",
-      coverCandidates: args.polish !== "quick-proof"
+      coverCandidates: args.polish !== "quick-proof",
+      coverIntro: args.polish !== "quick-proof",
+      coverEmbedReport: args.polish !== "quick-proof",
+      gapTrimReport: args.polish !== "quick-proof"
     },
     postProduction: {
       polishPreset: isPortrait ? "customer-mobile" : "customer-desktop",
@@ -387,7 +390,7 @@ node ${scriptPath}
 ## 增加 TTS 解说
 
 \`\`\`bash
-node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --language ${args.language} --engine edge-tts --pad-mode freeze --pad-buffer-ms 300
+node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --language ${args.language} --engine edge-tts --voice ${scenario.narration.voice} --pad-mode freeze --pad-buffer-ms 300
 \`\`\`
 
 > \`--pad-mode freeze\`（默认）会在某段 TTS 超过窗口长度时，自动在那段 cue 末尾插入冻结帧让配音读完，并把后续 cue 时间轴整体后移。生成的 narration-report 里有 \`timeline.totalPaddingMs\` 和每段的 \`paddingMs\` 可供查证。如果某段 padding 超过 \`--max-padding-ms\`（默认 60000）会 fail-fast，请缩短该段文案。
@@ -403,16 +406,32 @@ node <skill>/scripts/generate-video-cover.mjs --video ${args.out}/${args.name}-n
 
 检查 \`${args.out}/${args.name}-cover-candidates/contact-sheet.png\` 后，如果自动选择的画面不够代表产品主线，使用 \`--timestamp 00:00:36\` 指定更合适的帧重新生成。
 
+## 嵌入视频封面
+
+MP4 封面 PNG 必须作为 \`attached_pic\` 嵌入最终视频，否则很多播放器/网盘/审片工具不会把它当作缩略图。该命令支持原地写回：
+
+\`\`\`bash
+node <skill>/scripts/embed-video-cover.mjs --video ${args.out}/${args.name}-narrated.mp4 --cover ${args.out}/${args.name}-cover.png --out ${args.out}/${args.name}-narrated.mp4 --intro-duration-ms 2000 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --narration-vtt ${args.out}/${args.name}-narrated-narration.vtt --report ${args.out}/${args.name}-cover-embed-report.json
+\`\`\`
+
+> \`attached_pic\` 是播放器缩略图元数据，不等于所有播放器都会在播放前显示封面。\`--intro-duration-ms 2000\` 会额外把封面写成 2 秒真实视频开场，并同步后移 narration VTT/report；如果只要文件元数据封面，可去掉该参数。
+
+如果封面后仍出现 loading、白屏或等待空白，抽帧确认空白范围后删除该段。示例表示保留前 2 秒封面，删除 \`2.0s-8.5s\` 的空白：
+
+\`\`\`bash
+node <skill>/scripts/trim-video-gap.mjs --video ${args.out}/${args.name}-narrated.mp4 --cover ${args.out}/${args.name}-cover.png --out ${args.out}/${args.name}-narrated.mp4 --remove-start-ms 2000 --remove-end-ms 8500 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --narration-vtt ${args.out}/${args.name}-narrated-narration.vtt --report ${args.out}/${args.name}-gap-trim-report.json
+\`\`\`
+
 ## 质量门禁
 
 \`\`\`bash
-node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --require-audio --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --require-audio --require-cover-art --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
 \`\`\`
 
 如果使用默认 TTS 输出名，建议把 narration report 一并纳入时长校验：
 
 \`\`\`bash
-node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --require-audio --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
+node <skill>/scripts/validate-recording-report.mjs ${args.out}/${args.name}-report.json --video ${args.out}/${args.name}-narrated.mp4 --source-video ${args.out}/${args.name}.mp4 --narration-report ${args.out}/${args.name}-narrated-narration-report.json --require-audio --require-cover-art --expect-width ${videoSize.width} --expect-height ${videoSize.height} --write-media-report ${args.out}/${args.name}-media-report.json --write-frame-review ${args.out}/${args.name}-frame-review
 \`\`\`
 
 ## 审片页面

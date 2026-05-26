@@ -11,6 +11,8 @@ It is designed for repository-native demo work where a video should be repeatabl
 - Record stable MP4/WebM walkthroughs with open captions and optional sidecar subtitles.
 - Add TTS narration with automatic freeze-frame padding when speech is longer than the original cue window.
 - Generate standard video covers from real recording frames: 16:9 for desktop demos, 9:16 for mobile demos, including candidate contact sheets.
+- Embed the cover PNG into the final MP4 as an `attached_pic` stream so players can use it as the video thumbnail.
+- Trim accidental blank/loading gaps after the cover intro while keeping narration timing and cover art synchronized.
 - Validate page errors, response errors, horizontal overflow, audio presence, audio volume, video dimensions, and narration timing.
 - Generate frame-review contact sheets around caption/chapter transitions so overlays do not look half-rendered or unprofessional.
 - Generate a local review HTML page that brings together video, captions, cover candidates, frame review, and quality reports.
@@ -50,7 +52,7 @@ node scripts/install-skill.mjs --dest /path/to/skills/repo-demo-recorder --force
 - `ffmpeg` and `ffprobe`
 - Playwright available in the target repository when running generated recorder scripts
 - Optional for local narration: macOS `say`
-- Optional for higher-quality online narration: `uvx` with `edge-tts`
+- Optional for higher-quality online narration: `uvx` with `edge-tts` (no API key; requires network)
 
 ## Basic Usage
 
@@ -112,7 +114,7 @@ node ~/.codex/skills/repo-demo-recorder/scripts/add-tts-narration.mjs \
   --pad-buffer-ms 300
 ```
 
-Validate the final video and generate frame-review images:
+Validate narration timing and generate frame-review images:
 
 ```bash
 node ~/.codex/skills/repo-demo-recorder/scripts/validate-recording-report.mjs \
@@ -166,6 +168,51 @@ Review:
 docs/recordings/customer-demo-cover-candidates/contact-sheet.png
 ```
 
+Embed the selected cover into the final MP4. The command supports in-place output:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/embed-video-cover.mjs \
+  --video docs/recordings/customer-demo-narrated.mp4 \
+  --cover docs/recordings/customer-demo-cover.png \
+  --out docs/recordings/customer-demo-narrated.mp4 \
+  --intro-duration-ms 2000 \
+  --narration-report docs/recordings/customer-demo-narrated-narration-report.json \
+  --narration-vtt docs/recordings/customer-demo-narrated-narration.vtt \
+  --report docs/recordings/customer-demo-cover-embed-report.json
+```
+
+`attached_pic` is cover metadata. Many browsers and local players do not show it as the pre-play poster, so customer-ready exports should keep the `--intro-duration-ms 2000` cover slate unless you explicitly want metadata-only cover art.
+
+If the cover slate is followed by a blank/loading gap, remove that exact range and keep narration files in sync:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/trim-video-gap.mjs \
+  --video docs/recordings/customer-demo-narrated.mp4 \
+  --cover docs/recordings/customer-demo-cover.png \
+  --out docs/recordings/customer-demo-narrated.mp4 \
+  --remove-start-ms 2000 \
+  --remove-end-ms 8500 \
+  --narration-report docs/recordings/customer-demo-narrated-narration-report.json \
+  --narration-vtt docs/recordings/customer-demo-narrated-narration.vtt \
+  --report docs/recordings/customer-demo-gap-trim-report.json
+```
+
+Run the final media gate with cover-art verification:
+
+```bash
+node ~/.codex/skills/repo-demo-recorder/scripts/validate-recording-report.mjs \
+  docs/recordings/customer-demo-report.json \
+  --video docs/recordings/customer-demo-narrated.mp4 \
+  --source-video docs/recordings/customer-demo.mp4 \
+  --narration-report docs/recordings/customer-demo-narrated-narration-report.json \
+  --require-audio \
+  --require-cover-art \
+  --expect-width 1440 \
+  --expect-height 960 \
+  --write-media-report docs/recordings/customer-demo-media-report.json \
+  --write-frame-review docs/recordings/customer-demo-frame-review
+```
+
 Generate a review page:
 
 ```bash
@@ -211,7 +258,8 @@ For customer-ready demos, the skill now defaults toward:
 - Caption timing that starts only after overlays have settled.
 - TTS freeze-frame padding so narration is not clipped.
 - Media validation plus transition frame review.
-- A standard cover using a real product frame, readable title text, and candidate review.
+- A standard cover using a real product frame, readable title text, candidate review, and MP4 `attached_pic` embedding.
+- A visible cover intro for customer-ready MP4s, plus optional post-intro gap trimming when local recordings start with blank/loading frames.
 - Mobile demos use a 390x844 phone viewport, 1080x1920 portrait video, bottom safe-area captions, and a 1080x1920 cover.
 - Review HTML by default for formal delivery, so each segment can be approved or rerecorded with less back-and-forth.
 - Conservative polish presets in the skill; Screen Studio handoff for subjective editor work such as motion blur, cursor smoothing, manual zoom blending, webcam layouts, and device-frame tweaks.
@@ -222,6 +270,8 @@ For customer-ready demos, the skill now defaults toward:
 node scripts/scaffold-repo-demo.mjs --help
 node scripts/add-tts-narration.mjs --help
 node scripts/generate-video-cover.mjs --help
+node scripts/embed-video-cover.mjs --help
+node scripts/trim-video-gap.mjs --help
 node scripts/generate-review-page.mjs --help
 node scripts/polish-video.mjs --help
 node scripts/prepare-screen-studio-handoff.mjs --help
@@ -246,6 +296,8 @@ repo-demo-recorder/
     scaffold-repo-demo.mjs
     add-tts-narration.mjs
     generate-video-cover.mjs
+    embed-video-cover.mjs
+    trim-video-gap.mjs
     generate-review-page.mjs
     polish-video.mjs
     prepare-screen-studio-handoff.mjs

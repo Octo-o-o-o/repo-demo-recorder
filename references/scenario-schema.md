@@ -108,7 +108,10 @@
     "polishedMp4": false,
     "screenStudioHandoff": false,
     "coverImage": true,
-    "coverCandidates": true
+    "coverCandidates": true,
+    "coverIntro": true,
+    "coverEmbedReport": true,
+    "gapTrimReport": true
   },
   "postProduction": {
     "polishPreset": "customer-desktop",
