@@ -1045,11 +1045,12 @@ node ${scriptPath}
 ## 增加 TTS 解说
 
 \`\`\`bash
-node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --language ${args.language} --engine edge-tts --voice ${scenario.narration.voice} --pad-mode freeze --pad-buffer-ms 300
+node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --scenario ${scenarioPath}
 \`\`\`
 
+> \`--scenario\` 让脚本从 \`${scenarioPath}\` 读取 \`narration.engine\` / \`voice\` / \`rate\` / \`padMode\` / \`padBufferMs\` 等偏好（本场景默认 \`engine=${scenario.narration.engine}\`、\`voice=${scenario.narration.voice}\`）。要换 engine/voice 时直接改 scenario，不必每次重写命令。CLI 显式 \`--engine\` / \`--voice\` 仍可临时覆盖。
 > \`--pad-mode freeze\`（默认）会在某段 TTS 超过窗口长度时，自动在那段 cue 末尾插入冻结帧让配音读完，并把后续 cue 时间轴整体后移。生成的 narration-report 里有 \`timeline.totalPaddingMs\` 和每段的 \`paddingMs\` 可供查证。如果某段 padding 超过 \`--max-padding-ms\`（默认 60000）会 fail-fast，请缩短该段文案。
-> \`--engine edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。不能使用在线 TTS 时，可改为 \`--engine macos-say --voice Tingting\`。
+> \`engine=edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。不能使用在线 TTS 时，把 \`scenario.narration.engine\` 改成 \`macos-say\`、voice 改成 \`Tingting\` 即可。
 
 ## 生成封面
 
@@ -1198,11 +1199,12 @@ node ${scriptPath}
 ## Add TTS Narration
 
 \`\`\`bash
-node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --language ${args.language} --engine edge-tts --voice ${scenario.narration.voice} --pad-mode freeze --pad-buffer-ms 300
+node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 --report ${args.out}/${args.name}-report.json --out ${args.out}/${args.name}-narrated.mp4 --scenario ${scenarioPath}
 \`\`\`
 
+> \`--scenario\` makes the script read \`narration.engine\` / \`voice\` / \`rate\` / \`padMode\` / \`padBufferMs\` from \`${scenarioPath}\` (this scenario defaults to \`engine=${scenario.narration.engine}\`, \`voice=${scenario.narration.voice}\`). Change the engine or voice by editing the scenario; you don't need to rewrite the command every time. Explicit CLI flags (e.g. \`--engine\`, \`--voice\`) still override.
 > \`--pad-mode freeze\` (default) inserts cloned freeze frames at the end of any cue whose TTS audio is longer than its display window, and shifts subsequent cues. The narration-report exposes \`timeline.totalPaddingMs\` and per-cue \`paddingMs\`. A cue that needs more than \`--max-padding-ms\` (default 60000) fails fast; shorten that cue's text.
-> \`--engine edge-tts\` needs \`uvx\` and network access; it sends the text to Microsoft Edge online TTS. Offline? Use \`--engine macos-say --voice Tingting\` (or any voice from \`say -v ?\`).
+> \`engine=edge-tts\` needs \`uvx\` and network access; it sends the text to Microsoft Edge online TTS. Offline? Set \`scenario.narration.engine\` to \`macos-say\` and \`voice\` to \`Tingting\` (or any voice from \`say -v ?\`).
 
 ## Generate Cover
 

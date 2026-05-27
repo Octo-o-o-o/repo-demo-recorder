@@ -641,6 +641,58 @@ async function checkAvoidVisibleTermsSmoke() {
   }
 }
 
+async function checkTtsScenarioSmoke() {
+  // scaffold 把 narration.engine / voice 等偏好沉淀到 scenario，但历史上 add-tts-narration.mjs
+  // 完全不读 scenario，等于白沉淀。这条 smoke 保证：
+  // 1) scaffold 出 customer scenario 时 narration.engine=edge-tts、voice=zh-CN-YunyangNeural
+  // 2) generated RECORDING_GUIDE 中 add-tts 命令使用 --scenario 而不是 hardcode --engine
+  // 3) add-tts-narration.mjs 接受 --scenario 参数（不实际跑，只看 --help 输出）
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-tts-scenario-"))
+  try {
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "tts-default",
+      "--data-mode", "mock",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--language", "zh-CN",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--force"
+    ])
+    const scenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/tts-default.scenario.json"), "utf8"))
+    if (scenario.narration?.engine !== "edge-tts") {
+      fail(`customer audience scenario.narration.engine 应为 edge-tts，得到 ${scenario.narration?.engine}`)
+    }
+    if (scenario.narration?.voice !== "zh-CN-YunyangNeural") {
+      fail(`customer + zh-CN scenario.narration.voice 应为 zh-CN-YunyangNeural，得到 ${scenario.narration?.voice}`)
+    }
+    const guide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    // guide 应让用户用 --scenario，而不是 hardcode --engine edge-tts
+    if (!/add-tts-narration\.mjs[^\n]*--scenario/.test(guide)) {
+      fail("RECORDING_GUIDE 中 add-tts 命令必须使用 --scenario，把 engine/voice 偏好沉淀在 scenario 里")
+    }
+    if (/add-tts-narration\.mjs[^\n]*--engine\s+edge-tts/.test(guide)) {
+      fail("RECORDING_GUIDE 中 add-tts 命令不应再 hardcode --engine edge-tts；scenario.narration.engine 已经表达了这个选择")
+    }
+    // add-tts-narration --help 必须列出 --scenario
+    const helpResult = spawnSync(
+      "node",
+      ["scripts/add-tts-narration.mjs", "--help"],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (helpResult.status !== 0) {
+      fail("add-tts-narration --help 应返回 0，未返回")
+    }
+    if (!/--scenario/.test(helpResult.stdout)) {
+      fail("add-tts-narration --help 必须列出 --scenario")
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
 async function checkPreflightSmoke() {
   // preflight.steps 让 runner 在录制前 dismiss 首登 modal / PATCH onboardingComplete /
   // 预热演示账号。校验三件事：scaffold emit preflight 占位、guide 提到 preflight、
@@ -1362,6 +1414,7 @@ await checkCoverLocalizationSmoke()
 await checkAvoidVisibleTermsSmoke()
 await checkDataModeSmoke()
 await checkPreflightSmoke()
+await checkTtsScenarioSmoke()
 await checkConsoleErrorAllowlistSmoke()
 await checkReviewPageLangSmoke()
 await checkTtsArgValidationSmoke()

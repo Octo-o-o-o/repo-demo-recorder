@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawn, spawnSync } from "node:child_process"
@@ -23,8 +24,30 @@ const DEFAULTS = {
   videoCodec: "libx264",
   videoCrf: 20,
   videoPreset: "veryfast",
+  scenario: null,
   keepTemp: false
 }
+
+// scenario.narration 中的字段 → 本脚本 args 字段
+// 仅在用户没在 CLI 显式给同名参数时生效。这样 scaffold 沉淀到 scenario 的偏好
+// （customer audience 默认 edge-tts + zh-CN-YunyangNeural 等）才能真正用上，
+// 而不是要求用户每次手动重传 --engine/--voice。
+const SCENARIO_NARRATION_FIELDS = [
+  ["engine", "engine"],
+  ["voice", "voice"],
+  ["language", "language"],
+  ["rate", "rate"],
+  ["edgeRate", "edgeRate"],
+  ["edgePitch", "edgePitch"],
+  ["edgeVolume", "edgeVolume"],
+  ["timing", "timing"],
+  ["mix", "mix"],
+  ["padMode", "padMode"],
+  ["padBufferMs", "padBufferMs"],
+  ["maxPaddingMs", "maxPaddingMs"],
+  ["originalVolume", "originalVolume"],
+  ["narrationVolume", "narrationVolume"]
+]
 
 const PAD_MODES = new Set(["freeze", "none"])
 
@@ -33,6 +56,10 @@ function parseArgs(argv) {
     console.log(`Usage: node scripts/add-tts-narration.mjs --video <mp4> --report <report.json> --out <mp4> [options]
 
 Options:
+  --scenario <path>       Read defaults (engine/voice/rate/pad-mode/...) from
+                          scenario.narration. Any CLI flag below overrides
+                          the scenario value. RECOMMENDED so the engine
+                          choice lives in one place (the scenario file).
   --engine <engine>       macos-say | local-system | edge-tts (default: macos-say)
   --language <locale>     zh-CN | zh-TW | en-US (default: zh-CN)
   --voice <voice>         TTS voice name
@@ -50,12 +77,14 @@ Options:
     process.exit(0)
   }
   const args = { ...DEFAULTS }
+  const provided = new Set()
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
 
     if (token === "--keep-temp") {
       args.keepTemp = true
+      provided.add("keepTemp")
       continue
     }
 
@@ -69,13 +98,36 @@ Options:
       throw new Error(`参数 ${token} 缺少取值`)
     }
 
-    args[toCamelCase(key)] = value
+    const camelKey = toCamelCase(key)
+    args[camelKey] = value
+    provided.add(camelKey)
     index += 1
   }
 
   if (!args.video) throw new Error("缺少 --video <mp4/webm>")
   if (!args.report) throw new Error("缺少 --report <report.json>")
   if (!args.out) throw new Error("缺少 --out <narrated.mp4>")
+
+  // --scenario：把 scenario.narration 中的字段填充到 args，仅当用户没在 CLI 显式覆盖。
+  // 这一步必须在 default-only 的字段（rate / voice）回退之前，否则 default 会先把 voice 选成 Tingting，
+  // scenario.narration.voice="zh-CN-YunyangNeural" 反而被覆盖。
+  if (args.scenario) {
+    let scenarioJson = null
+    try {
+      scenarioJson = JSON.parse(readFileSync(args.scenario, "utf8"))
+    } catch (error) {
+      throw new Error(`--scenario 读取失败：${args.scenario}\n${error.message || error}`)
+    }
+    const narration = scenarioJson?.narration
+    if (narration && typeof narration === "object") {
+      for (const [argKey, scenarioKey] of SCENARIO_NARRATION_FIELDS) {
+        if (provided.has(argKey)) continue
+        const value = narration[scenarioKey]
+        if (value === undefined || value === null) continue
+        args[argKey] = value
+      }
+    }
+  }
 
   args.rate = Number(args.rate || (args.language === "en-US" ? 165 : 180))
   args.originalVolume = Number(args.originalVolume)
@@ -625,6 +677,9 @@ const args = parseArgs(process.argv.slice(2))
 if (!["macos-say", "local-system", "edge-tts"].includes(args.engine)) {
   throw new Error(`当前脚本仅支持 macos-say/local-system/edge-tts，收到：${args.engine}`)
 }
+// 把生效的 engine/voice 打到 stdout，让用户能在一长串日志里一眼看到「这次到底用了什么 TTS」。
+// 历史上这条信息只能从最终的 narration-report.json 里翻，遇到「scenario 里写了 edge-tts 但实际跑的是 macos-say」时不容易发现。
+console.log(`[tts] engine=${args.engine} voice=${args.voice || "(auto)"} language=${args.language}${args.scenario ? ` scenario=${args.scenario}` : ""}`)
 if (!commandExists("ffmpeg") || !commandExists("ffprobe")) {
   throw new Error("需要 ffmpeg 和 ffprobe")
 }
