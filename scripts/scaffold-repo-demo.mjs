@@ -235,6 +235,15 @@ Options:
     if (next === undefined || next.startsWith("--")) {
       throw new Error(`参数 ${token} 缺少取值`)
     }
+    // fail-fast on typos：DEFAULTS 没有该字段就是拼错的参数。
+    // 之前 --audiance customer 会被静默写入 args.audiance，然后按默认 audience=qa-proof 跑下去。
+    if (!(key in DEFAULTS)) {
+      throw new Error(
+        `无法识别参数：${token}（拼写或大小写有误？）。详见 --help。\n` +
+          `  当前支持：--root --name --language --subtitles --flows --base-url --audience ` +
+          `--polish --surface --data-mode --allow-production --out --force`
+      )
+    }
 
     args[key] = next
     index += 1

@@ -1,11 +1,43 @@
 {
   "name": "repo-demo-recorder-skill",
   "version": "0.1.0",
-  "description": "Codex skill for reproducible, narrated, reviewed, and quality-gated repository demo recordings.",
+  "description": "Claude Code / Codex / Claude API skill for reproducible, narrated, reviewed, and quality-gated repository demo recordings (Playwright + ffmpeg).",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Octo-o-o-o/repo-demo-recorder.git"
+  },
+  "homepage": "https://github.com/Octo-o-o-o/repo-demo-recorder#readme",
+  "bugs": {
+    "url": "https://github.com/Octo-o-o-o/repo-demo-recorder/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "codex",
+    "skill",
+    "agent-skill",
+    "demo",
+    "recording",
+    "playwright",
+    "ffmpeg",
+    "tts",
+    "narration",
+    "screencast"
+  ],
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "LICENSE",
+    "agents/",
+    "references/",
+    "scripts/"
+  ],
   "bin": {
     "repo-demo-scaffold": "./scripts/scaffold-repo-demo.mjs",
+    "repo-demo-prepare-worktree": "./scripts/prepare-recording-worktree.mjs",
+    "repo-demo-cleanup-worktree": "./scripts/cleanup-recording-worktree.mjs",
     "repo-demo-add-tts": "./scripts/add-tts-narration.mjs",
     "repo-demo-validate": "./scripts/validate-recording-report.mjs",
     "repo-demo-cover": "./scripts/generate-video-cover.mjs",

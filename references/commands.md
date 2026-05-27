@@ -21,7 +21,7 @@ node <skill>/scripts/prepare-recording-worktree.mjs \
   --include-uncommitted
 ```
 
-prepare 默认会软链 `node_modules` / `.env` / `.env.local` / `.env.development*` / `.env.test*` / `.env.production*`。要追加（例如 framework cache）：
+prepare 默认会软链 `node_modules` / `.env` / `.env.local` / `.env.development*` / `.env.test*`，并默认跳过 `.env.production*`。生产录制必须先确认授权，再显式 `--link .env.production.local`。要追加其它路径（例如 framework cache）：
 
 ```bash
 node <skill>/scripts/prepare-recording-worktree.mjs \

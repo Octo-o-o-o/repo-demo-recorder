@@ -24,13 +24,22 @@ function parseArgs(argv) {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(`Usage: node scripts/install-skill.mjs [options]
 
+Install the repo-demo-recorder skill into a known Codex / Claude Code skills home,
+or any custom destination via --dest.
+
 Options:
   --dest <dir>     Install destination (overrides --target)
   --target <name>  codex (default) | claude — pick a known skill home
                    codex:   $CODEX_HOME/skills/repo-demo-recorder or ~/.codex/skills/repo-demo-recorder
                    claude:  ~/.claude/skills/repo-demo-recorder (Claude Code user-level skill)
   --force          Overwrite existing destination
-  --dry-run        Print files that would be copied
+  --dry-run        Print files that would be copied without writing anything
+  -h, --help       Show this help
+
+Examples:
+  node scripts/install-skill.mjs --force                       # install to Codex default
+  node scripts/install-skill.mjs --target claude --force       # install to ~/.claude/skills
+  node scripts/install-skill.mjs --dest ./out --dry-run        # preview without writing
 `)
     process.exit(0)
   }
@@ -95,11 +104,12 @@ if (existsSync(destRoot)) {
 
 if (!args.dryRun) await mkdir(destRoot, { recursive: true })
 
-// 复制 skill 运行时需要的全部资源。
+// 复制 skill 运行时需要的全部资源，与 package.json `files` 字段保持一致：
 // - SKILL.md / references / scripts：skill 的核心
 // - agents/openai.yaml：Codex 的可选 manifest（Claude Code 会忽略，无副作用）
 // - scripts/templates：scaffold-repo-demo.mjs 运行时会读取这里的 playwright runner template
-for (const item of ["SKILL.md", "agents", "references", "scripts"]) {
+// - README.md / LICENSE：方便用户在安装目录里直接查阅文档与许可证
+for (const item of ["SKILL.md", "README.md", "LICENSE", "agents", "references", "scripts"]) {
   await copyRuntimeFile(item, destRoot, args.dryRun)
 }
 

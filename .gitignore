@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+.claude/settings.local.json
 
 # Generated demo output
 docs/recordings/

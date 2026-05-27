@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { existsSync, lstatSync } from "node:fs"
+import { existsSync, lstatSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
@@ -36,6 +36,8 @@ function commandExists(command) {
 async function checkRequiredFiles() {
   for (const filePath of [
     "SKILL.md",
+    "package.json",
+    ".gitignore",
     "agents/openai.yaml",
     "references/options.md",
     "references/quality-gates.md",
@@ -65,6 +67,13 @@ async function checkSkillFrontmatter() {
   if (!/^description:\s*.+/m.test(text)) fail("SKILL.md frontmatter must include description")
 }
 
+async function checkRepositoryIgnoreRules() {
+  const text = await readFile(path.join(repoRoot, ".gitignore"), "utf8")
+  if (!/(^|\n)\.claude\/settings\.local\.json(\n|$)/.test(text)) {
+    fail(".gitignore should exclude .claude/settings.local.json")
+  }
+}
+
 async function checkScriptSyntax() {
   for (const filePath of [
     "scripts/scaffold-repo-demo.mjs",
@@ -85,6 +94,59 @@ async function checkScriptSyntax() {
     "scripts/cleanup-recording-worktree.mjs"
   ]) {
     run("node", ["--check", filePath])
+  }
+}
+
+async function checkPackageBins() {
+  const pkg = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"))
+  const expectedFiles = ["SKILL.md", "README.md", "LICENSE", "agents/", "references/", "scripts/"]
+  if (JSON.stringify(pkg.files || []) !== JSON.stringify(expectedFiles)) {
+    fail(`package.json files should whitelist only runtime/docs files: ${expectedFiles.join(", ")}`)
+  }
+  // 元数据：确保 npm 用户能从 metadata 找到源码、issues、关键词
+  if (!pkg.repository?.url) {
+    fail("package.json 应该声明 repository.url，便于 npm 用户回到源码")
+  }
+  if (!pkg.homepage) {
+    fail("package.json 应该声明 homepage，便于 npm 用户跳转 README")
+  }
+  if (!pkg.bugs?.url) {
+    fail("package.json 应该声明 bugs.url，便于用户报告 issue")
+  }
+  if (!Array.isArray(pkg.keywords) || pkg.keywords.length === 0) {
+    fail("package.json 应该声明 keywords，便于 npm 搜索")
+  }
+  const expectedBins = {
+    "repo-demo-scaffold": "./scripts/scaffold-repo-demo.mjs",
+    "repo-demo-prepare-worktree": "./scripts/prepare-recording-worktree.mjs",
+    "repo-demo-cleanup-worktree": "./scripts/cleanup-recording-worktree.mjs",
+    "repo-demo-add-tts": "./scripts/add-tts-narration.mjs",
+    "repo-demo-validate": "./scripts/validate-recording-report.mjs",
+    "repo-demo-cover": "./scripts/generate-video-cover.mjs",
+    "repo-demo-embed-cover": "./scripts/embed-video-cover.mjs",
+    "repo-demo-trim-gap": "./scripts/trim-video-gap.mjs",
+    "repo-demo-review": "./scripts/generate-review-page.mjs",
+    "repo-demo-polish": "./scripts/polish-video.mjs",
+    "repo-demo-screen-studio": "./scripts/prepare-screen-studio-handoff.mjs",
+    "repo-demo-install-skill": "./scripts/install-skill.mjs"
+  }
+  for (const [binName, filePath] of Object.entries(expectedBins)) {
+    if (pkg.bin?.[binName] !== filePath) {
+      fail(`package.json bin.${binName} should point to ${filePath}`)
+      continue
+    }
+    const absolute = path.join(repoRoot, filePath)
+    if (!existsSync(absolute)) {
+      fail(`package.json bin.${binName} points to a missing file: ${filePath}`)
+      continue
+    }
+    const text = await readFile(absolute, "utf8")
+    if (!text.startsWith("#!/usr/bin/env node")) {
+      fail(`package.json bin.${binName} target must start with a node shebang: ${filePath}`)
+    }
+    if (process.platform !== "win32" && (statSync(absolute).mode & 0o111) === 0) {
+      fail(`package.json bin.${binName} target is not executable: ${filePath}`)
+    }
   }
 }
 
@@ -1241,6 +1303,7 @@ async function checkWorktreeIsolationSmoke() {
       "module.exports={}\n"
     )
     await writeFile(path.join(tempRoot, ".env.local"), "API_KEY=demo\n")
+    await writeFile(path.join(tempRoot, ".env.production.local"), "PROD_API_KEY=real\n")
     spawnSync("git", ["add", "README.md", ".gitignore"], { cwd: tempRoot })
     const commit = spawnSync("git", ["commit", "-q", "-m", "init"], {
       cwd: tempRoot,
@@ -1299,6 +1362,10 @@ async function checkWorktreeIsolationSmoke() {
       fail("prepare did not symlink .env.local into worktree")
       return
     }
+    if (existsSync(path.join(worktreePath, ".env.production.local"))) {
+      fail("prepare should not link or carry .env.production.local by default")
+      return
+    }
     const carriedReadme = await readFile(path.join(worktreePath, "README.md"), "utf8")
     if (!carriedReadme.includes("more line")) {
       fail("prepare --include-uncommitted did not carry tracked diff")
@@ -1331,6 +1398,11 @@ async function checkWorktreeIsolationSmoke() {
       path.join(worktreePath, "docs/recordings/smoke-report.json"),
       JSON.stringify({ scenario: "smoke" })
     )
+    await mkdir(path.join(tempRoot, "docs/recordings"), { recursive: true })
+    await writeFile(
+      path.join(tempRoot, "docs/recordings/smoke-report.json"),
+      JSON.stringify({ scenario: "main-existing" })
+    )
     await mkdir(path.join(worktreePath, "scripts/recordings"), { recursive: true })
     await writeFile(path.join(worktreePath, "scripts/recordings/smoke.mjs"), "// runner")
 
@@ -1355,6 +1427,13 @@ async function checkWorktreeIsolationSmoke() {
     }
     if (!existsSync(path.join(tempRoot, "docs/recordings/smoke.mp4"))) {
       fail("cleanup did not copy docs/recordings back to main work tree")
+      return
+    }
+    const preservedReport = JSON.parse(
+      await readFile(path.join(tempRoot, "docs/recordings/smoke-report.json"), "utf8")
+    )
+    if (preservedReport.scenario !== "main-existing") {
+      fail("cleanup --copy-mode merge should not overwrite existing main work tree files")
       return
     }
     if (!existsSync(path.join(tempRoot, "scripts/recordings/smoke.mjs"))) {
@@ -1403,9 +1482,141 @@ async function checkWorktreeRejectsNonGit() {
   }
 }
 
+async function checkUnknownArgFailFastSmoke() {
+  // 任何 scaffold/add-tts-narration/generate-video-cover 接收到拼错的参数都应 fail-fast，
+  // 不能默默把 args.audiance="customer" 当成 args.audience 不存在然后用默认值跑。
+  const cases = [
+    {
+      label: "scaffold-repo-demo --audiance",
+      cmd: [
+        "scripts/scaffold-repo-demo.mjs",
+        "--root", repoRoot,
+        "--name", "typo-check",
+        "--audiance", "customer",
+        "--flows", "core"
+      ],
+      expectInError: /(无法识别参数|--audience)/
+    },
+    {
+      label: "add-tts-narration --engin",
+      cmd: [
+        "scripts/add-tts-narration.mjs",
+        "--video", "/tmp/x.mp4",
+        "--report", "/tmp/x.json",
+        "--out", "/tmp/y.mp4",
+        "--engin", "macos-say"
+      ],
+      expectInError: /(无法识别参数|--engine)/
+    },
+    {
+      label: "generate-video-cover --titel",
+      cmd: [
+        "scripts/generate-video-cover.mjs",
+        "--video", "/tmp/x.mp4",
+        "--out", "/tmp/y.png",
+        "--titel", "Wrong"
+      ],
+      expectInError: /(Unknown argument|--title)/
+    }
+  ]
+  for (const item of cases) {
+    const result = spawnSync("node", item.cmd, { cwd: repoRoot, encoding: "utf8" })
+    if (result.status === 0) {
+      fail(`${item.label} 应该 fail-fast，但是成功了`)
+      continue
+    }
+    if (!item.expectInError.test(result.stdout + result.stderr)) {
+      fail(`${item.label} 的错误信息不够清晰，期望匹配 ${item.expectInError}`)
+    }
+  }
+}
+
+async function checkInstallSkillSmoke() {
+  // 校验 install-skill.mjs 把 README.md / LICENSE 一并放进安装目录，
+  // 这样用户从 ~/.codex/skills/repo-demo-recorder/ 也能直接看到许可与说明。
+  const dest = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-install-"))
+  try {
+    const result = spawnSync(
+      "node",
+      ["scripts/install-skill.mjs", "--dest", dest, "--force"],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (result.status !== 0) {
+      fail(`install-skill.mjs failed:\nstdout=${result.stdout}\nstderr=${result.stderr}`)
+      return
+    }
+    for (const item of [
+      "SKILL.md",
+      "README.md",
+      "LICENSE",
+      "agents/openai.yaml",
+      "references/options.md",
+      "scripts/scaffold-repo-demo.mjs",
+      "scripts/templates/playwright-runner.mjs"
+    ]) {
+      if (!existsSync(path.join(dest, item))) {
+        fail(`install-skill.mjs 没有复制 ${item}（用户的 skill 目录里会看不到）`)
+      }
+    }
+    // --help 必须 exit 0
+    const help = spawnSync("node", ["scripts/install-skill.mjs", "--help"], {
+      cwd: repoRoot,
+      encoding: "utf8"
+    })
+    if (help.status !== 0) fail("install-skill.mjs --help 应返回 0")
+    if (!/--dry-run/.test(help.stdout)) {
+      fail("install-skill.mjs --help 必须列出 --dry-run，便于发现 dry-run 能力")
+    }
+  } finally {
+    await rm(dest, { recursive: true, force: true })
+  }
+}
+
+async function checkWorktreeRejectsUnsafeRelativePaths() {
+  const prepareResult = spawnSync(
+    "node",
+    [
+      "scripts/prepare-recording-worktree.mjs",
+      "--root",
+      repoRoot,
+      "--name",
+      "unsafe-link",
+      "--link",
+      "../outside"
+    ],
+    { cwd: repoRoot, encoding: "utf8" }
+  )
+  if (prepareResult.status === 0) {
+    fail("prepare-recording-worktree.mjs 应拒绝 --link ../outside")
+  }
+  if (!/(相对路径|项目根目录内)/.test(prepareResult.stdout + prepareResult.stderr)) {
+    fail("prepare 拒绝 unsafe --link 时应说明路径必须留在项目根目录内")
+  }
+
+  const cleanupResult = spawnSync(
+    "node",
+    [
+      "scripts/cleanup-recording-worktree.mjs",
+      "--worktree",
+      "/tmp/does-not-matter",
+      "--copy",
+      "../outside"
+    ],
+    { cwd: repoRoot, encoding: "utf8" }
+  )
+  if (cleanupResult.status === 0) {
+    fail("cleanup-recording-worktree.mjs 应拒绝 --copy ../outside")
+  }
+  if (!/(相对路径|项目根目录内)/.test(cleanupResult.stdout + cleanupResult.stderr)) {
+    fail("cleanup 拒绝 unsafe --copy 时应说明路径必须留在项目根目录内")
+  }
+}
+
 await checkRequiredFiles()
 await checkSkillFrontmatter()
+await checkRepositoryIgnoreRules()
 await checkScriptSyntax()
+await checkPackageBins()
 await checkScaffoldSmoke()
 await checkProjectDetectionSmoke()
 await checkNpmRunDevSmoke()
@@ -1423,6 +1634,9 @@ await checkEmbedCoverSmoke()
 await checkNarrationAndPolishSmoke()
 await checkWorktreeIsolationSmoke()
 await checkWorktreeRejectsNonGit()
+await checkWorktreeRejectsUnsafeRelativePaths()
+await checkUnknownArgFailFastSmoke()
+await checkInstallSkillSmoke()
 
 if (process.exitCode) {
   process.exit(process.exitCode)

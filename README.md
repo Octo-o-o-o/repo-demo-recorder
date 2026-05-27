@@ -1,8 +1,8 @@
 # Repo Demo Recorder
 
-`repo-demo-recorder` is a Codex skill for turning local product demos into reproducible recording artifacts: scripted Playwright walkthroughs, realistic demo data, captions, narration, media reports, and frame-review proof.
+`repo-demo-recorder` is an [Agent Skill](https://docs.anthropic.com/en/docs/claude-code/skills) for turning local product demos into reproducible recording artifacts: scripted Playwright walkthroughs, realistic demo data, captions, narration, media reports, and frame-review proof.
 
-It is designed for repository-native demo work where a video should be repeatable, reviewable, and safe to share with customers or stakeholders.
+It is designed for repository-native demo work where a video should be repeatable, reviewable, and safe to share with customers or stakeholders. It works equally well as a **Claude Code skill**, a **Codex skill**, or a set of standalone CLI tools driven by any agent (Claude API, Cursor, etc.).
 
 ## What It Helps With
 
@@ -18,40 +18,41 @@ It is designed for repository-native demo work where a video should be repeatabl
 - Generate a local review HTML page that brings together video, captions, cover candidates, frame review, and quality reports.
 - Apply conservative post-production presets, or prepare a Screen Studio handoff pack for professional zoom/cursor/timeline polish.
 
+## Use With Claude / Claude Code / Codex
+
+| Surface | How to invoke |
+| --- | --- |
+| **Claude Code** | `node scripts/install-skill.mjs --target claude --force` installs to `~/.claude/skills/repo-demo-recorder`. In a project, ask: *"Use repo-demo-recorder to record a customer-ready demo."* Claude Code loads `SKILL.md` automatically. |
+| **Codex CLI** | `node scripts/install-skill.mjs --force` installs to `$CODEX_HOME/skills/repo-demo-recorder` (or `~/.codex/skills/...`). Codex picks it up via `agents/openai.yaml`. |
+| **Claude API / custom agent** | Point the agent at the installed directory's `SKILL.md`, or just call the `scripts/*.mjs` binaries directly — every script ships with `--help` and is designed to be agent-callable. |
+| **Cursor / others** | Run the CLI scripts directly. Each script accepts JSON-friendly arguments and emits machine-readable reports (`*-report.json`, `*-media-report.json`, `*-narration-report.json`). |
+
+Inside the skill, `SKILL.md` is the canonical agent prompt. `references/` provides the deep-dive matrices the agent consults when it needs to make a non-default decision (e.g. `references/options.md`, `references/scenario-schema.md`, `references/quality-gates.md`, `references/commands.md`).
+
 ## Install
 
-Clone this repository and install the skill into Codex:
+Clone this repository and install the skill into your agent's skill directory:
 
 ```bash
 git clone https://github.com/Octo-o-o-o/repo-demo-recorder.git
 cd repo-demo-recorder
+
+# Codex (default): installs to $CODEX_HOME/skills/repo-demo-recorder
+# or ~/.codex/skills/repo-demo-recorder when CODEX_HOME is unset
 node scripts/install-skill.mjs --force
-```
 
-By default this installs to:
-
-```text
-$CODEX_HOME/skills/repo-demo-recorder
-```
-
-or, when `CODEX_HOME` is not set:
-
-```text
-~/.codex/skills/repo-demo-recorder
-```
-
-To install into the Claude Code user-level skills directory:
-
-```bash
+# Claude Code user-level skills directory
 node scripts/install-skill.mjs --target claude --force
 # → ~/.claude/skills/repo-demo-recorder
-```
 
-To install somewhere else:
-
-```bash
+# Any custom location
 node scripts/install-skill.mjs --dest /path/to/skills/repo-demo-recorder --force
+
+# Preview without writing
+node scripts/install-skill.mjs --target claude --dry-run
 ```
+
+After install, the agent (Claude Code / Codex) discovers the skill on its next launch. You can also drive the scripts directly via `node ~/.codex/skills/repo-demo-recorder/scripts/<name>.mjs --help` without any agent involvement.
 
 ## Requirements
 
@@ -101,7 +102,7 @@ node ~/.codex/skills/repo-demo-recorder/scripts/cleanup-recording-worktree.mjs \
 What `prepare-recording-worktree.mjs` does:
 
 - `git worktree add --detach <root>/.repo-demo-recorder/worktrees/<name>` (override with `--worktree-dir`).
-- Symlinks `node_modules` and `.env*` from the main checkout so the worktree boots without a fresh install.
+- Symlinks `node_modules` and non-production `.env*` files from the main checkout so the worktree boots without a fresh install. `.env.production*` is skipped by default; only link it explicitly after production recording has been authorized.
 - Optionally `--include-uncommitted` to carry staged + unstaged + untracked changes (default link paths skipped to keep symlinks intact).
 - Writes `/.repo-demo-recorder/` into `.git/info/exclude` so the worktree parent dir never shows up in the main checkout's `git status`.
 - Drops a `.repo-demo-recorder-worktree.json` metadata file inside the worktree for `cleanup-recording-worktree.mjs` to consume.
@@ -117,9 +118,54 @@ Skip the worktree step (and just run everything in the main checkout) when:
 - The target project is not a git repo (prepare fail-fasts and tells you to `git init` or skip).
 - The whole point of the recording is uncommitted local edits that are awkward to carry across a worktree.
 
+## Data source: must pick one before scaffold (`--data-mode`)
+
+Before scaffolding the skill **must** know which environment the recording targets — this decides auth, baseUrl, seed/cleanup, and on-screen safety rules. Pick one and pass it explicitly:
+
+| `--data-mode` | When to use | What scaffold does |
+| --- | --- | --- |
+| `mock` (default) | Local dev with seeded fixtures. No real PII. Safe to record and reshare. | UI writes / cleanup allowed; `auth.mode=dev-login-or-storage-state`. |
+| `staging` | Staging / pre-prod tenant + dedicated demo account. | Forces `auth.storageState`, disables cleanup (shared tenant), guide includes a Playwright login snippet. |
+| `production` | Real customer data. **Compliance-sensitive** — requires authorization. | Requires `--allow-production`. Forces `data.strategy=readonly`, `cleanup=false`, embeds a compliance warning in the guide and scenario. |
+
+```bash
+# Local mock data (recommended default)
+node scripts/scaffold-repo-demo.mjs --root . --name customer-demo --data-mode mock ...
+
+# Staging tenant — provide auth.storageState path after scaffold
+node scripts/scaffold-repo-demo.mjs --root . --name staging-demo --data-mode staging ...
+
+# Production — only with written authorization and a strictly read-only flow
+node scripts/scaffold-repo-demo.mjs --root . --name prod-demo \
+  --data-mode production --allow-production ...
+```
+
+## Demo account warm-up (`scenario.preflight.steps`)
+
+A freshly created demo account often triggers first-run onboarding modals, privacy banners or empty-state placeholders that sit on top of every dashboard page during recording.
+
+`scenario.preflight.steps` runs a short sequence in the same browser context **before** the recording starts, so cookies / localStorage / session apply, but captions / steps / video timeline are **not** affected. Supported types: `goto / click / fill / wait / fetch`.
+
+```json
+"preflight": {
+  "steps": [
+    {
+      "type": "fetch",
+      "method": "PATCH",
+      "url": "/api/user/profile",
+      "body": { "onboardingComplete": true },
+      "expectOk": true
+    },
+    { "type": "click", "selector": "[data-testid=onboarding-skip]" }
+  ]
+}
+```
+
+The scaffold emits `preflight.steps: []` and the generated `RECORDING_GUIDE.md` has a `Demo account warm-up` section with copy-pasteable templates.
+
 ## Basic Usage
 
-Ask Codex to use the skill, for example:
+Ask the agent (Claude Code / Codex / Cursor / Claude API) to use the skill, for example:
 
 ```text
 Use repo-demo-recorder to create a customer-ready narrated demo for this project.
@@ -133,6 +179,7 @@ node ~/.codex/skills/repo-demo-recorder/scripts/scaffold-repo-demo.mjs \
   --name customer-demo \
   --audience customer \
   --polish customer-ready \
+  --data-mode mock \
   --flows core,add-data \
   --base-url http://127.0.0.1:3210 \
   --subtitles both
@@ -147,6 +194,7 @@ node ~/.codex/skills/repo-demo-recorder/scripts/scaffold-repo-demo.mjs \
   --surface mobile \
   --audience customer \
   --polish customer-ready \
+  --data-mode mock \
   --flows mobile \
   --base-url http://127.0.0.1:3210 \
   --subtitles both
@@ -331,6 +379,8 @@ For customer-ready demos, the skill now defaults toward:
 
 ```bash
 node scripts/scaffold-repo-demo.mjs --help
+node scripts/prepare-recording-worktree.mjs --help
+node scripts/cleanup-recording-worktree.mjs --help
 node scripts/add-tts-narration.mjs --help
 node scripts/generate-video-cover.mjs --help
 node scripts/embed-video-cover.mjs --help
@@ -349,24 +399,32 @@ Use `--help` for script-specific options. The scripts intentionally fail fast wh
 
 ```text
 repo-demo-recorder/
-  SKILL.md
-  agents/openai.yaml
+  SKILL.md                        # The skill manifest (loaded by Claude Code / Codex)
+  README.md                       # Human-readable docs and quick start (this file)
+  LICENSE                         # MIT
+  package.json                    # `npm run check`; bin entries for every script
+  agents/openai.yaml              # Codex agent display metadata
   references/
-    options.md
-    quality-gates.md
-    scenario-schema.md
+    options.md                    # Audience / polish / subtitles / cover / TTS option matrix
+    quality-gates.md              # Validation rules, common failures, report.minimal schema
+    scenario-schema.md            # scenario.json field reference + flow/step examples
+    commands.md                   # Long-form command playbook
   scripts/
-    scaffold-repo-demo.mjs
-    add-tts-narration.mjs
-    generate-video-cover.mjs
-    embed-video-cover.mjs
-    trim-video-gap.mjs
-    generate-review-page.mjs
-    polish-video.mjs
-    prepare-screen-studio-handoff.mjs
-    validate-recording-report.mjs
-    install-skill.mjs
-    check-skill.mjs
+    scaffold-repo-demo.mjs        # Generate scenario.json + Playwright runner + RECORDING_GUIDE.md
+    prepare-recording-worktree.mjs# `git worktree add` an isolated recording environment
+    cleanup-recording-worktree.mjs# Copy artifacts back + `git worktree remove`
+    add-tts-narration.mjs         # Synthesize TTS, freeze-pad overflowing cues, mux narration
+    generate-video-cover.mjs      # 16:9 / 9:16 cover PNG + candidate contact sheet
+    embed-video-cover.mjs         # Mux cover PNG as MP4 attached_pic + optional visible intro
+    trim-video-gap.mjs            # Remove blank/loading gap and shift narration timings
+    generate-review-page.mjs      # Single-file review HTML (video + captions + cover + frames)
+    polish-video.mjs              # Conservative export presets (customer-desktop, social-mobile, …)
+    prepare-screen-studio-handoff.mjs # Bundle raw/narrated assets for Screen Studio polish
+    validate-recording-report.mjs # ffprobe + report quality gates; writes media report + frame review
+    install-skill.mjs             # Install this repo into a Codex / Claude Code skills home
+    check-skill.mjs               # Self-check: required files, syntax, end-to-end smoke tests
+    templates/
+      playwright-runner.mjs       # Source template scaffold uses to emit per-project runners
 ```
 
 ## Development

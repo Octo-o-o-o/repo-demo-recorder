@@ -55,24 +55,61 @@ function parseArgs(argv) {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(`Usage: node scripts/add-tts-narration.mjs --video <mp4> --report <report.json> --out <mp4> [options]
 
-Options:
+Required:
+  --video <mp4|webm>      Source recording produced by the runner
+  --report <report.json>  Recording report (provides captions[])
+  --out <narrated.mp4>    Output narrated video. Sibling files
+                          <out>-narration.vtt and <out>-narration-report.json
+                          are written next to it.
+
+Common options:
   --scenario <path>       Read defaults (engine/voice/rate/pad-mode/...) from
                           scenario.narration. Any CLI flag below overrides
                           the scenario value. RECOMMENDED so the engine
                           choice lives in one place (the scenario file).
   --engine <engine>       macos-say | local-system | edge-tts (default: macos-say)
   --language <locale>     zh-CN | zh-TW | en-US (default: zh-CN)
-  --voice <voice>         TTS voice name
-  --rate <wpm>            macOS say speech rate
-  --edge-rate <value>     edge-tts rate, e.g. +0%
+  --voice <voice>         TTS voice name (engine-specific; see --help docs)
+  --rate <wpm>            macOS say speech rate (default: 165 en-US, 180 zh-CN)
+  --timing <mode>         auto | report | spread (default: auto)
+  --mix <mode>            replace | duck | keep-original (default: replace)
+  --pad-mode <mode>       freeze | none (default: freeze; auto-extends video
+                          when a cue's TTS audio overruns its display window)
+  --pad-buffer-ms <ms>    Buffer added after each cue (default: 300)
+  --max-padding-ms <ms>   Fail-fast padding limit per cue (default: 60000)
+
+edge-tts tuning:
+  --edge-rate <value>     edge-tts rate, e.g. +0% / -10%
   --edge-pitch <value>    edge-tts pitch, e.g. +0Hz
   --edge-volume <value>   edge-tts volume, e.g. +0%
-  --timing <mode>         auto | report | spread
-  --mix <mode>            replace | duck | keep-original
-  --pad-mode <mode>       freeze | none (default: freeze)
-  --pad-buffer-ms <ms>    Buffer after each cue (default: 300)
-  --max-padding-ms <ms>   Fail-fast padding limit per cue (default: 60000)
+
+Mixing volumes (only when --mix is duck/keep-original):
+  --original-volume <n>   Original audio volume (default: 0.18)
+  --narration-volume <n>  TTS narration volume (default: 1)
+
+Re-encode tuning (only used when --pad-mode freeze triggers re-encoding):
+  --video-codec <name>    Video codec (default: libx264)
+  --video-crf <n>         CRF value, 0-51 (default: 20)
+  --video-preset <name>   x264 preset (default: veryfast)
+
+Debug:
   --keep-temp             Keep temporary synthesized audio files
+  -h, --help              Show this help
+
+Examples:
+  # Use scenario.narration preferences (recommended after scaffold)
+  node scripts/add-tts-narration.mjs \\
+    --video docs/recordings/demo.mp4 \\
+    --report docs/recordings/demo-report.json \\
+    --out docs/recordings/demo-narrated.mp4 \\
+    --scenario docs/recordings/demo.scenario.json
+
+  # Force edge-tts with a specific voice
+  node scripts/add-tts-narration.mjs \\
+    --video docs/recordings/demo.mp4 \\
+    --report docs/recordings/demo-report.json \\
+    --out docs/recordings/demo-narrated.mp4 \\
+    --engine edge-tts --voice zh-CN-YunyangNeural
 `)
     process.exit(0)
   }
@@ -99,6 +136,13 @@ Options:
     }
 
     const camelKey = toCamelCase(key)
+    // fail-fast on typos：DEFAULTS 没有该字段的话，说明是拼错的参数。
+    // 之前不校验，--engin macos-say 会被静默赋给 args.engin，然后跑默认 engine。
+    if (!(camelKey in args) && camelKey !== "video" && camelKey !== "report" && camelKey !== "out") {
+      throw new Error(
+        `无法识别参数：${token}。可用参数见 --help（包括 --video/--report/--out/--scenario/--engine/--voice/--rate/--language/--timing/--mix/--pad-mode/--pad-buffer-ms/--max-padding-ms/--video-codec/--video-crf/--video-preset/--original-volume/--narration-volume/--edge-rate/--edge-pitch/--edge-volume/--keep-temp）。`
+      )
+    }
     args[camelKey] = value
     provided.add(camelKey)
     index += 1

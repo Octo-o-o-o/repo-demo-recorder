@@ -30,7 +30,7 @@ Options:
   --worktree <path>        必填，prepare-recording-worktree.mjs 创建的 worktree 路径
   --copy <relPath>         追加要从 worktree 拷回主工作树的相对路径，可多次
   --no-copy-defaults       不拷贝默认路径（docs/recordings/、scripts/recordings/）
-  --copy-mode <mode>       merge | overwrite | backup（默认 merge：保留主工作树已有文件）
+  --copy-mode <mode>       merge | overwrite | backup（默认 merge：只补缺失文件，不覆盖已有文件）
   --keep                   不执行 git worktree remove，只搬产物 + 清软链（调试用）
   -h, --help               显示帮助
 
@@ -38,6 +38,18 @@ Options:
 若想保留 worktree 状态调试，加 --keep。
 `)
   process.exit(0)
+}
+
+function normalizeSafeRelativePath(value, flagName) {
+  const raw = String(value || "").trim()
+  if (!raw) throw new Error(`${flagName} 不能为空`)
+  if (raw.includes("\0")) throw new Error(`${flagName} 不能包含 NUL 字符`)
+  if (path.isAbsolute(raw)) throw new Error(`${flagName} 必须是相对路径，不能是绝对路径：${raw}`)
+  const normalized = path.normalize(raw).split(path.sep).join("/")
+  if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+    throw new Error(`${flagName} 必须留在项目根目录内，不能指向项目外：${raw}`)
+  }
+  return normalized
 }
 
 function parseArgs(argv) {
@@ -62,7 +74,7 @@ function parseArgs(argv) {
       throw new Error(`参数 ${token} 缺少取值`)
     }
     if (key === "copy") {
-      args.extraCopies.push(value)
+      args.extraCopies.push(normalizeSafeRelativePath(value, "--copy"))
     } else if (key === "worktree") {
       args.worktree = value
     } else if (key === "copy-mode") {
@@ -131,10 +143,13 @@ async function copyArtifacts(worktreePath, mainPath, relPaths, mode) {
       } else if (mode === "overwrite") {
         await rm(dst, { recursive: true, force: true })
       }
-      // merge 模式不动主工作树已有文件，cp 用 force=true 但 errorOnExist=false 让冲突时覆盖单文件
     }
     await mkdir(path.dirname(dst), { recursive: true })
-    await cp(src, dst, { recursive: true, force: true, errorOnExist: false })
+    await cp(src, dst, {
+      recursive: true,
+      force: mode !== "merge",
+      errorOnExist: false
+    })
     copied.push(rel)
   }
   return { copied, skipped }

@@ -61,6 +61,12 @@ Options:
     const value = argv[index + 1]
     if (!value || value.startsWith("--")) throw new Error(`Missing value for ${token}`)
     const key = token.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase())
+    // fail-fast on typos：之前没校验，--titel "..." 会被静默接受。
+    if (!(key in args)) {
+      throw new Error(
+        `Unknown argument: ${token}. See --help (--video/--report/--out/--title/--subtitle/--line/--badge/--timestamp/--width/--height/--theme/--candidates-dir/--keep-temp).`
+      )
+    }
     args[key] = value
     provided.add(key)
     index += 1

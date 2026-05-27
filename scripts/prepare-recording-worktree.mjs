@@ -2,7 +2,7 @@
 
 // 在目标项目里新开一个 git worktree，作为"录制环境"，让 scaffold、runner、TTS、封面、validate
 // 等步骤跑在隔离工作树里，不污染主工作树的 dirty state、不需要主工作树退出当前分支。
-// 默认会把 node_modules / .env* 软链过去，避免新 worktree 走一遍完整 install。
+// 默认会把 node_modules / 非生产 .env* 软链过去，避免新 worktree 走一遍完整 install。
 // cleanup 由 scripts/cleanup-recording-worktree.mjs 负责，会把产物拷回主工作树后 git worktree remove。
 
 import { spawnSync } from "node:child_process"
@@ -22,7 +22,8 @@ const DEFAULTS = {
   force: false
 }
 
-// node_modules 必 link，避免 worktree 走完整 install；.env* 必 link，否则 dev server 起不来。
+// node_modules 必 link，避免 worktree 走完整 install；非生产 .env* 默认 link，保证 dev/test server 起得来。
+// .env.production* 不默认 link 或 carry，避免 mock/staging 录制环境意外接触生产凭据；确需生产录制时显式 --link。
 // dist / .next / .vite 等构建缓存不默认 link：万一与主工作树并行启动会互相覆盖。
 const DEFAULT_LINKS = [
   "node_modules",
@@ -31,7 +32,11 @@ const DEFAULT_LINKS = [
   ".env.development",
   ".env.development.local",
   ".env.test",
-  ".env.test.local",
+  ".env.test.local"
+]
+
+const DEFAULT_CARRY_EXCLUDES = [
+  ...DEFAULT_LINKS,
   ".env.production",
   ".env.production.local"
 ]
@@ -44,7 +49,7 @@ function printHelpAndExit() {
 为目标项目创建一个隔离录制工作树。脚本会：
   1. 校验 --root 是 git 工作树
   2. 用 git worktree add --detach 在指定路径创建工作树
-  3. 把 node_modules / .env* 软链过去（可关）
+  3. 把 node_modules / 非生产 .env* 软链过去（可关；.env.production* 需显式 --link）
   4. 可选把当前未提交改动（staged + unstaged + untracked）带到工作树
   5. 写入元数据文件 ${METADATA_FILE}，供 cleanup-recording-worktree.mjs 读取
 
@@ -56,6 +61,7 @@ Options:
   --base <ref>             从哪个 ref 创建 worktree，默认 HEAD（detached）
   --include-uncommitted    把 root 当前 staged+unstaged+untracked 改动也搬到 worktree
   --link <relPath>         追加要从主工作树软链到 worktree 的相对路径，可多次指定
+                           若确需生产环境变量，必须显式 --link .env.production.local
   --no-link-defaults       不软链 node_modules / .env* 等默认项
   --output-json <path>     把结果元数据写到该文件（额外于 stdout 的 JSON 行）
   --force                  worktreeDir 已存在时先 git worktree remove --force 再重建
@@ -65,6 +71,18 @@ Options:
   {"worktreePath":"...","mainPath":"...","linkedPaths":[...],"carriedUncommitted":bool}
 `)
   process.exit(0)
+}
+
+function normalizeSafeRelativePath(value, flagName) {
+  const raw = String(value || "").trim()
+  if (!raw) throw new Error(`${flagName} 不能为空`)
+  if (raw.includes("\0")) throw new Error(`${flagName} 不能包含 NUL 字符`)
+  if (path.isAbsolute(raw)) throw new Error(`${flagName} 必须是相对路径，不能是绝对路径：${raw}`)
+  const normalized = path.normalize(raw).split(path.sep).join("/")
+  if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+    throw new Error(`${flagName} 必须留在项目根目录内，不能指向项目外：${raw}`)
+  }
+  return normalized
 }
 
 function parseArgs(argv) {
@@ -94,7 +112,7 @@ function parseArgs(argv) {
       throw new Error(`参数 ${token} 缺少取值`)
     }
     if (key === "link") {
-      args.extraLinks.push(value)
+      args.extraLinks.push(normalizeSafeRelativePath(value, "--link"))
     } else {
       const camel = key.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase())
       args[camel] = value
@@ -367,9 +385,7 @@ async function main() {
   const hasUncommitted = status.length > 0
   let carriedUncommitted = false
   // carry 时跳过默认 link 路径，让它们走 symlink，而不是 cp 整个 node_modules 过去。
-  const skipForCarry = args.noLinkDefaults
-    ? args.extraLinks.slice()
-    : [...DEFAULT_LINKS, ...args.extraLinks]
+  const skipForCarry = [...DEFAULT_CARRY_EXCLUDES, ...args.extraLinks]
   if (hasUncommitted) {
     if (args.includeUncommitted) {
       const carried = await carryUncommitted(mainPath, worktreePath, skipForCarry)
