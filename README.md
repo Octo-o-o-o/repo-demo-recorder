@@ -24,7 +24,7 @@ It is designed for repository-native demo work where a video should be repeatabl
 | --- | --- |
 | **Claude Code** | `node scripts/install-skill.mjs --target claude --force` installs to `~/.claude/skills/repo-demo-recorder`. In a project, ask: *"Use repo-demo-recorder to record a customer-ready demo."* Claude Code loads `SKILL.md` automatically. |
 | **Codex CLI** | `node scripts/install-skill.mjs --force` installs to `$CODEX_HOME/skills/repo-demo-recorder` (or `~/.codex/skills/...`). Codex picks it up via `agents/openai.yaml`. |
-| **Claude API / custom agent** | Point the agent at the installed directory's `SKILL.md`, or just call the `scripts/*.mjs` binaries directly — every script ships with `--help` and is designed to be agent-callable. |
+| **Claude API / custom agent** | Point the agent at the installed directory's `SKILL.md`, or call the CLI entrypoints directly — they ship with `--help` and are designed to be agent-callable. |
 | **Cursor / others** | Run the CLI scripts directly. Each script accepts JSON-friendly arguments and emits machine-readable reports (`*-report.json`, `*-media-report.json`, `*-narration-report.json`). |
 
 Inside the skill, `SKILL.md` is the canonical agent prompt. `references/` provides the deep-dive matrices the agent consults when it needs to make a non-default decision (e.g. `references/options.md`, `references/scenario-schema.md`, `references/quality-gates.md`, `references/commands.md`).
@@ -130,14 +130,27 @@ Before scaffolding the skill **must** know which environment the recording targe
 
 ```bash
 # Local mock data (recommended default)
-node scripts/scaffold-repo-demo.mjs --root . --name customer-demo --data-mode mock ...
+node scripts/scaffold-repo-demo.mjs \
+  --root . \
+  --name customer-demo \
+  --data-mode mock \
+  --flows core \
+  --base-url http://127.0.0.1:3210
 
 # Staging tenant — provide auth.storageState path after scaffold
-node scripts/scaffold-repo-demo.mjs --root . --name staging-demo --data-mode staging ...
+node scripts/scaffold-repo-demo.mjs \
+  --root . \
+  --name staging-demo \
+  --data-mode staging \
+  --flows core \
+  --base-url https://staging.example.com
 
 # Production — only with written authorization and a strictly read-only flow
 node scripts/scaffold-repo-demo.mjs --root . --name prod-demo \
-  --data-mode production --allow-production ...
+  --data-mode production \
+  --allow-production \
+  --flows core \
+  --base-url https://app.example.com
 ```
 
 ## Demo account warm-up (`scenario.preflight.steps`)
@@ -390,6 +403,7 @@ node scripts/polish-video.mjs --help
 node scripts/prepare-screen-studio-handoff.mjs --help
 node scripts/validate-recording-report.mjs --help
 node scripts/install-skill.mjs --help
+node scripts/check-skill.mjs --help
 node scripts/check-skill.mjs
 ```
 
@@ -402,7 +416,7 @@ repo-demo-recorder/
   SKILL.md                        # The skill manifest (loaded by Claude Code / Codex)
   README.md                       # Human-readable docs and quick start (this file)
   LICENSE                         # MIT
-  package.json                    # `npm run check`; bin entries for every script
+  package.json                    # npm metadata, CLI bin entries, `npm run check`
   agents/openai.yaml              # Codex agent display metadata
   references/
     options.md                    # Audience / polish / subtitles / cover / TTS option matrix

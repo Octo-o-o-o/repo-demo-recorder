@@ -46,6 +46,7 @@
     "repo-demo-review": "./scripts/generate-review-page.mjs",
     "repo-demo-polish": "./scripts/polish-video.mjs",
     "repo-demo-screen-studio": "./scripts/prepare-screen-studio-handoff.mjs",
+    "repo-demo-check": "./scripts/check-skill.mjs",
     "repo-demo-install-skill": "./scripts/install-skill.mjs"
   },
   "scripts": {

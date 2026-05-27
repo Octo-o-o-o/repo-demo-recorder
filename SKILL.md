@@ -56,7 +56,7 @@ node <skill>/scripts/prepare-recording-worktree.mjs --root . --name <flow>
 cd <worktreePath>
 
 # 1-9. scaffold / runner / TTS / cover / validate / review 全部在 worktree 内执行
-node <skill>/scripts/scaffold-repo-demo.mjs --root . --name <flow> ...
+node <skill>/scripts/scaffold-repo-demo.mjs --root . --name <flow> --data-mode mock --flows core
 node scripts/recordings/<flow>.mjs
 # ... 后续命令同 references/commands.md
 
@@ -104,7 +104,7 @@ skill 内置的脚本化录制路径依赖 Playwright 自动驱动浏览器，�
 2. 用 `scripts/add-tts-narration.mjs` 加解说；竖屏录屏直接传 `--engine edge-tts --voice zh-CN-YunyangNeural`。
 3. 用 `scripts/generate-video-cover.mjs --theme mobile --width 1080 --height 1920` 抽帧生成候选封面。
 4. 用 `scripts/embed-video-cover.mjs --intro-duration-ms 2000` 嵌入封面，并按需 `trim-video-gap.mjs` 删除片头空白。
-5. 用 `scripts/validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` 跑媒体级校验。
+5. 用 `scripts/validate-recording-report.mjs --require-cover-art --expect-width <width> --expect-height <height>` 跑媒体级校验。
 6. 用 `scripts/generate-review-page.mjs` 输出审片页；客户可发版用 `scripts/prepare-screen-studio-handoff.mjs` 打包给 Screen Studio。
 
 scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/project.yml/build.gradle` 并打印警告：generated runner 不能驱动原生 UI，请改走外部录屏接入工作流，并忽略 scenario 中的 `server/auth/healthPath` 字段。
@@ -119,7 +119,7 @@ scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/
 - Next.js 项目还会自动把 `/_next/static/*`、`/_next/webpack-hmr`、`/_next/data/development`、`/__nextjs_*` 预填进 `qualityGates.allowedResponseErrors`，避免 HMR/source-map 噪声让每次 validate 都 fail。
 - 写入型 flow（含 `data`）默认 `qualityGates.requireApiSuccess=true`，配合 `step.waitForApi` 让 runner 自动写 `report.apiAssertions[]`。`requireDbAssertions` 默认 false，因为 DB 断言需要用户自己提供 module（见下方）。
 
-显式传 `--base-url` 覆盖自动检测；scenario.json 落盘后仍可手工编辑 `server/baseUrl/healthPath`。
+显式传 `--base-url` 覆盖自动检测；scenario.json 落盘后仍可手工编辑顶层 `baseUrl`、`server.command` 和 `server.healthPath`。
 
 `scaffold` 会校验 `--audience / --polish / --language / --subtitles / --surface` 的取值，拼错时 fail-fast 给出有效取值列表。
 

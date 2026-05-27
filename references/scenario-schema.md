@@ -30,7 +30,7 @@
     "defaultCaptionPattern": "客户价值 + 可控机制"
   },
   "narration": {
-    "enabled": false,
+    "enabled": true,
     "engine": "edge-tts",
     "language": "zh-CN",
     "voice": "zh-CN-YunyangNeural",
@@ -41,7 +41,7 @@
     "padBufferMs": 300,
     "maxPaddingMs": 60000
   },
-  "style": "qa-proof",
+  "style": "sales-demo",
   "viewport": { "width": 1440, "height": 960 },
   "recording": {
     "videoSize": { "width": 1440, "height": 960 },
@@ -58,17 +58,17 @@
     "settleMs": 160,
     "chapterBanner": true,
     "chapterPosition": "top-center",
-    "captionPosition": "bottom-center"
+    "captionPosition": "bottom-left"
   },
   "cover": {
     "enabled": true,
     "mode": "with-candidates",
     "width": 1280,
     "height": 720,
-    "title": "Product Demo",
-    "subtitle": "Customer-ready product walkthrough",
-    "line": "Home · Search · Automation",
-    "badge": "CUSTOMER DEMO",
+    "title": "产品演示",
+    "subtitle": "面向客户的可发版走查",
+    "line": "新增数据流程",
+    "badge": "客户演示",
     "timestamp": "auto"
   },
   "segmentation": {
@@ -77,22 +77,28 @@
     "mergeAfterPass": true,
     "rerecordOnFailure": true
   },
+  "preflight": {
+    "steps": []
+  },
   "auth": {
-    "mode": "dev-login",
-    "endpoint": "/api/auth/dev-login",
-    "payload": { "email": "demo@example.com", "role": "ADMIN" }
+    "mode": "dev-login-or-storage-state",
+    "storageState": null,
+    "endpoint": null,
+    "payload": null
   },
   "data": {
+    "mode": "mock",
     "strategy": "ui-write",
-    "backupCommand": "npm run db:backup",
+    "cleanup": true,
+    "backupCommand": null,
     "seedCommand": null,
     "demoPrefix": "演示",
-    "cleanup": false
+    "productionWarning": null
   },
   "server": {
     "command": "npm run dev",
-    "port": 3210,
-    "healthPath": "/login"
+    "healthPath": "/",
+    "startupTimeoutMs": 120000
   },
   "outputs": {
     "dir": "docs/recordings",
@@ -101,9 +107,9 @@
     "report": true,
     "finalScreenshot": true,
     "sidecarSubtitles": false,
-    "narratedMp4": false,
-    "narrationTranscript": false,
-    "mediaReport": false,
+    "narratedMp4": true,
+    "narrationTranscript": true,
+    "mediaReport": true,
     "reviewPage": true,
     "polishedMp4": false,
     "screenStudioHandoff": false,
@@ -127,12 +133,14 @@
   "qualityGates": {
     "maxOverflow": 0,
     "allowPageErrors": false,
-    "allowedResponseErrors": ["/api/settings/html-style-templates"],
+    "allowedResponseErrors": [],
+    "allowedConsoleErrors": [],
     "requireApiSuccess": true,
-    "requireDbAssertions": true,
+    "requireDbAssertions": false,
     "media": {
-      "requireAudio": false,
+      "requireAudio": true,
       "minDurationRatio": 0.98,
+      "maxDurationRatio": null,
       "minAudioMaxDb": -50,
       "expectWidth": 1440,
       "expectHeight": 960

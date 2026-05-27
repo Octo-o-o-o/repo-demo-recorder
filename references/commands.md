@@ -50,12 +50,15 @@ node <skill>/scripts/cleanup-recording-worktree.mjs \
 
 ## 1. 生成场景骨架
 
+先显式选择数据来源：本地安全演示用 `--data-mode mock`，staging 演示账号用 `--data-mode staging`，真实生产数据必须同时加 `--data-mode production --allow-production`。
+
 桌面端通用走查：
 
 ```bash
 node <skill>/scripts/scaffold-repo-demo.mjs \
   --root . \
   --name add-data-flow \
+  --data-mode mock \
   --language zh-CN \
   --subtitles open \
   --flows core,add-data
@@ -70,6 +73,7 @@ node <skill>/scripts/scaffold-repo-demo.mjs \
   --surface mobile \
   --language zh-CN \
   --subtitles both \
+  --data-mode mock \
   --flows mobile \
   --audience customer \
   --polish customer-ready

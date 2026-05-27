@@ -10,6 +10,29 @@ import { fileURLToPath } from "node:url"
 const __filename = fileURLToPath(import.meta.url)
 const repoRoot = path.resolve(path.dirname(__filename), "..")
 
+function printHelpAndExit() {
+  console.log(`Usage: node scripts/check-skill.mjs
+
+Run the repo-demo-recorder repository self-check.
+
+Checks:
+  - required skill files and Codex metadata
+  - package files and CLI bin mappings
+  - script syntax
+  - scaffold smoke tests
+  - media helper smoke tests when ffmpeg/ffprobe are available
+  - worktree isolation, install, and documentation consistency
+
+Options:
+  -h, --help  Show this help
+`)
+  process.exit(0)
+}
+
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  printHelpAndExit()
+}
+
 function fail(message) {
   console.error(`[check] ${message}`)
   process.exitCode = 1
@@ -128,6 +151,7 @@ async function checkPackageBins() {
     "repo-demo-review": "./scripts/generate-review-page.mjs",
     "repo-demo-polish": "./scripts/polish-video.mjs",
     "repo-demo-screen-studio": "./scripts/prepare-screen-studio-handoff.mjs",
+    "repo-demo-check": "./scripts/check-skill.mjs",
     "repo-demo-install-skill": "./scripts/install-skill.mjs"
   }
   for (const [binName, filePath] of Object.entries(expectedBins)) {
@@ -147,6 +171,42 @@ async function checkPackageBins() {
     if (process.platform !== "win32" && (statSync(absolute).mode & 0o111) === 0) {
       fail(`package.json bin.${binName} target is not executable: ${filePath}`)
     }
+    const helpResult = spawnSync("node", [filePath, "--help"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+    if (helpResult.status !== 0) {
+      fail(`package.json bin.${binName} target should support --help: ${filePath}`)
+    } else if (!/Usage:/.test(helpResult.stdout)) {
+      fail(`package.json bin.${binName} --help should print Usage: ${filePath}`)
+    }
+  }
+}
+
+async function checkDocumentationConsistency() {
+  const scenarioSchema = await readFile(path.join(repoRoot, "references/scenario-schema.md"), "utf8")
+  if (/"port"\s*:/.test(scenarioSchema)) {
+    fail("references/scenario-schema.md should not document deprecated scenario.server.port")
+  }
+  if (!/"mode": "mock"/.test(scenarioSchema)) {
+    fail("references/scenario-schema.md should document data.mode")
+  }
+  if (!/"storageState": null/.test(scenarioSchema)) {
+    fail("references/scenario-schema.md should document auth.storageState")
+  }
+
+  const commands = await readFile(path.join(repoRoot, "references/commands.md"), "utf8")
+  if (!/--data-mode mock/.test(commands)) {
+    fail("references/commands.md scaffold examples should pass --data-mode mock explicitly")
+  }
+
+  const readme = await readFile(path.join(repoRoot, "README.md"), "utf8")
+  if (/bin entries for every script/.test(readme)) {
+    fail("README.md should not claim package.json has bin entries for every script")
+  }
+  if (/--data-mode (mock|staging|production)[^`\n]*\.\.\./.test(readme)) {
+    fail("README.md data-mode examples should be copy-pasteable, not end in literal ellipses")
   }
 }
 
@@ -1617,6 +1677,7 @@ await checkSkillFrontmatter()
 await checkRepositoryIgnoreRules()
 await checkScriptSyntax()
 await checkPackageBins()
+await checkDocumentationConsistency()
 await checkScaffoldSmoke()
 await checkProjectDetectionSmoke()
 await checkNpmRunDevSmoke()
