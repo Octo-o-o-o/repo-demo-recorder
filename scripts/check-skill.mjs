@@ -641,6 +641,55 @@ async function checkAvoidVisibleTermsSmoke() {
   }
 }
 
+async function checkPreflightSmoke() {
+  // preflight.steps 让 runner 在录制前 dismiss 首登 modal / PATCH onboardingComplete /
+  // 预热演示账号。校验三件事：scaffold emit preflight 占位、guide 提到 preflight、
+  // runner template 中保留 runPreflightStep 入口。
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-preflight-"))
+  try {
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "preflight-default",
+      "--data-mode", "mock",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--force"
+    ])
+    const scenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/preflight-default.scenario.json"), "utf8"))
+    if (!scenario.preflight || !Array.isArray(scenario.preflight.steps)) {
+      fail("scaffold 必须在 scenario 里 emit preflight.steps（数组占位），便于用户填 dismiss modal 的步骤")
+    }
+    const guide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!/preflight/.test(guide)) {
+      fail("RECORDING_GUIDE 必须解释 preflight 用法（关 onboarding modal / PATCH 账号 onboarded 等）")
+    }
+    if (!/演示账号预热|Demo account warm-up/.test(guide)) {
+      fail("RECORDING_GUIDE 必须包含「演示账号预热 / Demo account warm-up」章节")
+    }
+    if (!/onboardingComplete|onboarding-skip|首登|onboarding modal/i.test(guide)) {
+      fail("RECORDING_GUIDE 必须给出具体的预热例子（onboardingComplete fetch、点击 modal）")
+    }
+
+    // runner template 自身应能用 preflight 字段（已经在 emit 的 runner 脚本里）。
+    const runnerPath = path.join(tempRoot, "scripts/recordings/preflight-default.mjs")
+    run("node", ["--check", runnerPath], { cwd: tempRoot })
+    const runnerSrc = await readFile(runnerPath, "utf8")
+    if (!/runPreflightStep|scenario\.preflight/.test(runnerSrc)) {
+      fail("generated runner 应包含 preflight 入口（runPreflightStep 或 scenario.preflight 处理）")
+    }
+    // preflight 必须仅支持 goto/click/fill/wait/fetch；不能允许 caption/chapter/screenshot/db
+    // 这些会污染录制产物的 step 类型在 preflight 段被静默执行。
+    if (!/preflight step.*unsupported type/.test(runnerSrc)) {
+      fail("runner preflight 段应在遇到不支持的 step type 时 fail-fast（runPreflightStep 错误信息）")
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
 async function checkDataModeSmoke() {
   // 数据来源 / 录制环境（mock|staging|production）是 MUST-ASK 项。
   // 这一组 smoke 覆盖：默认 mock、staging、production 的三种行为，
@@ -1312,6 +1361,7 @@ await checkScaffoldInvalidArgs()
 await checkCoverLocalizationSmoke()
 await checkAvoidVisibleTermsSmoke()
 await checkDataModeSmoke()
+await checkPreflightSmoke()
 await checkConsoleErrorAllowlistSmoke()
 await checkReviewPageLangSmoke()
 await checkTtsArgValidationSmoke()

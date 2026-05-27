@@ -730,6 +730,77 @@ async function probeHasAudio(filePath) {
   })
 }
 
+// preflight.steps：在正式录制开始前跑一组"准备"步骤，画面/字幕都不入镜，
+// 也不写进 report.captions / report.steps。常见用途：
+// - 关掉 first-run onboarding / 隐私同意 / 新人引导，让 dashboard 第一帧就是干净的业务画面
+// - PATCH /api/user/profile { onboardingComplete: true } 直接把演示账号 onboarded
+// - GET /api/.../seed 让 staging 服务器准备演示数据
+// 仅支持 goto / click / fill / wait / fetch 五种类型；caption/chapter/screenshot/db
+// 等会污染录制产物的类型不允许出现在 preflight 里。
+async function runPreflightStep(step, index) {
+  if (step.type === "goto") {
+    await page.goto(new URL(step.url || step.route || "/", scenario.baseUrl).toString(), {
+      waitUntil: step.waitUntil || "domcontentloaded",
+      timeout: step.gotoTimeoutMs || 30_000
+    })
+  } else if (step.type === "click") {
+    const locator = page.locator(step.selector).first()
+    await locator.waitFor({ state: "visible", timeout: step.timeoutMs || 10_000 })
+    await locator.click({ delay: step.delayMs || 40 })
+    if (step.waitForUrl) {
+      await page.waitForURL(new RegExp(step.waitForUrl), { timeout: step.timeoutMs || 20_000 })
+    }
+  } else if (step.type === "fill") {
+    const locator = page.locator(step.selector).first()
+    await locator.waitFor({ state: "visible", timeout: step.timeoutMs || 10_000 })
+    await locator.fill(step.value || "")
+  } else if (step.type === "wait") {
+    if (step.selector) {
+      await page.locator(step.selector).first().waitFor({
+        state: step.state || "visible",
+        timeout: step.timeoutMs || 10_000
+      })
+    } else if (step.url) {
+      await page.waitForURL(new RegExp(step.url), { timeout: step.timeoutMs || 10_000 })
+    } else {
+      await page.waitForTimeout(step.durationMs || 500)
+    }
+  } else if (step.type === "fetch") {
+    // 用 page.evaluate 走浏览器上下文，自动带上 cookie/session/storage——不用手动拷贝
+    // session cookie 到 Node 的 fetch。expectOk=true（默认）时非 2xx 直接抛出。
+    const expectOk = step.expectOk !== false
+    const result = await page.evaluate(async (req) => {
+      try {
+        const res = await fetch(req.url, {
+          method: req.method || "GET",
+          headers: req.headers || (req.body !== undefined ? { "Content-Type": "application/json" } : undefined),
+          body: req.body !== undefined ? (typeof req.body === "string" ? req.body : JSON.stringify(req.body)) : undefined,
+          credentials: "include"
+        })
+        let text = ""
+        try {
+          text = await res.text()
+        } catch {
+          // ignore
+        }
+        return { status: res.status, ok: res.ok, body: text?.slice(0, 4000) || "" }
+      } catch (error) {
+        return { status: 0, ok: false, body: String(error?.message || error) }
+      }
+    }, { url: step.url, method: step.method, headers: step.headers, body: step.body })
+    if (expectOk && !result.ok) {
+      throw new Error(
+        `preflight fetch ${step.method || "GET"} ${step.url} failed: status=${result.status} body=${result.body}`
+      )
+    }
+    console.log(`[recorder] preflight fetch ${step.method || "GET"} ${step.url} → ${result.status}`)
+  } else {
+    throw new Error(
+      `preflight step ${index + 1} unsupported type "${step.type}". Use goto / click / fill / wait / fetch only.`
+    )
+  }
+}
+
 async function convertToMp4(webmPath, mp4Path) {
   const hasAudio = await probeHasAudio(webmPath)
   const ffmpegArgs = [
@@ -757,6 +828,26 @@ async function convertToMp4(webmPath, mp4Path) {
 try {
   await ensureServer()
   await page.goto(scenario.baseUrl, { waitUntil: "domcontentloaded" })
+
+  // preflight 在正式录制画面之前跑：dismiss onboarding modal / 把演示账号 PATCH 成 onboarded /
+  // 准备 staging 演示数据。preflight 期间产生的 console / response error 仍然会被记录（出错
+  // 我们要看到），但 captions / steps / dbAssertions 不会被污染。
+  const preflightSteps = Array.isArray(scenario.preflight?.steps) ? scenario.preflight.steps : []
+  if (preflightSteps.length > 0) {
+    console.log(`[recorder] preflight: ${preflightSteps.length} step(s) before recording`)
+    const captionsBefore = report.captions.length
+    const stepsBefore = report.steps.length
+    const dbBefore = report.dbAssertions.length
+    const apiBefore = report.apiAssertions.length
+    for (const [index, step] of preflightSteps.entries()) {
+      await runPreflightStep(step, index)
+    }
+    // 若 preflight 阶段不小心产生了 caption/step/db/api 记录，截掉，让 report 时间线只覆盖真录制段。
+    report.captions.length = captionsBefore
+    report.steps.length = stepsBefore
+    report.dbAssertions.length = dbBefore
+    report.apiAssertions.length = apiBefore
+  }
 
   for (const flow of scenario.flows || []) {
     await page.goto(new URL(flow.route || "/", scenario.baseUrl).toString(), {

@@ -569,6 +569,20 @@ function buildScenario(args, detection = null) {
       mergeAfterPass: args.polish !== "quick-proof",
       rerecordOnFailure: args.polish === "customer-ready"
     },
+    // preflight：在正式录制开始之前先跑一组步骤（不入镜、不入 report.captions/steps），
+    // 用来把演示账号"预热"到一个适合录制的状态——例如关掉 first-run modal / 同意条款 /
+    // 把 onboardingComplete 标成 true / 准备 seed 数据。
+    //
+    // 默认是空数组。常见模板见 RECORDING_GUIDE.md「演示账号预热」段落。
+    // 支持的 step 类型仅限：goto / click / fill / wait / fetch。
+    //
+    // 示例：
+    //   { "type": "fetch", "method": "PATCH", "url": "/api/user/profile",
+    //     "body": { "onboardingComplete": true }, "expectOk": true }
+    //   { "type": "click", "selector": "[data-testid=onboarding-skip]" }
+    preflight: {
+      steps: []
+    },
     // auth 字段保留 storageState（runner 唯一会读的字段）；mode/endpoint/payload 留作人工 review 提示，
     // 仅在 dev-login 流程里手动填充。runner 不会自动调用 endpoint。
     auth: {
@@ -822,8 +836,45 @@ This scenario runs **locally** with seeded fixtures. Setup checklist:
    - SQL / Drizzle: \`psql -f scripts/recordings/seed.sql\`.
    - In-memory: a route handler that wraps Next API routes for the duration of the demo (\`scripts/recordings/<name>-mock-server.mjs\`).
 3. If the product requires login, generate \`scenario.auth.storageState\` so the runner enters the dashboard without a manual login flow. For projects with email OTP, hit \`/api/auth/send-code\` then \`/api/auth/verify-code\` directly from Node (the dev fallback usually logs the OTP to the server console). Save the resulting cookies into a JSON storage-state file and point \`auth.storageState\` at it.
-4. Mock recordings can safely use \`scenario.data.strategy=ui-write\` and \`cleanup=true\`. Add \`flow.steps\` for fill/click/waitForApi as needed.
-5. Captions and narration can mention "示例 / sample / demo data" but should **not** mention \`mock\`, \`fixture\`, \`renderer-only\`, internal boundary names, or dev warnings (already enforced by \`narrative.avoidVisibleTerms\`).`
+4. **Pre-warm the demo account** — see "Demo account warm-up" below. Without this step a fresh account triggers first-run onboarding modals on every dashboard page and they stay on camera.
+5. Mock recordings can safely use \`scenario.data.strategy=ui-write\` and \`cleanup=true\`. Add \`flow.steps\` for fill/click/waitForApi as needed.
+6. Captions and narration can mention "sample / demo data" but should **not** mention \`mock\`, \`fixture\`, \`renderer-only\`, internal boundary names, or dev warnings (already enforced by \`narrative.avoidVisibleTerms\`).
+
+### Demo account warm-up (\`scenario.preflight.steps\`)
+
+A freshly created demo account usually has unmet first-run gates: onboarding dialogs, privacy consent banners, "welcome tour" overlays, empty-state placeholders. These will sit on top of every dashboard page during recording, making it look like the runner only captured the onboarding modal.
+
+Use \`scenario.preflight.steps\` to dismiss them **before recording starts**. Preflight steps run with the same browser context (so cookies / localStorage / session apply) but do NOT enter the video, captions, or report timeline. Supported step types: \`goto / click / fill / wait / fetch\`.
+
+The cleanest pattern is a single \`fetch\` directly to the project's profile API:
+
+\`\`\`json
+"preflight": {
+  "steps": [
+    {
+      "type": "fetch",
+      "method": "PATCH",
+      "url": "/api/user/profile",
+      "body": { "onboardingComplete": true },
+      "expectOk": true
+    }
+  ]
+}
+\`\`\`
+
+If the modal is purely client-side (no API), click through it instead:
+
+\`\`\`json
+"preflight": {
+  "steps": [
+    { "type": "goto", "url": "/dashboard" },
+    { "type": "click", "selector": "[data-testid=onboarding-skip]" },
+    { "type": "wait", "selector": "[data-testid=dashboard-ready]", "state": "visible" }
+  ]
+}
+\`\`\`
+
+If the gate is stored in \`localStorage\`, prefer building it into your \`auth.storageState\` JSON's \`origins[].localStorage\` array — that's faster than clicking through every recording.`
   }
   return `## 数据来源：mock（本地 dev + seeded 演示数据）
 
@@ -835,8 +886,45 @@ This scenario runs **locally** with seeded fixtures. Setup checklist:
    - SQL / Drizzle：\`psql -f scripts/recordings/seed.sql\`。
    - 内存拦截：用一个 route handler 包住 Next API 路由（\`scripts/recordings/<name>-mock-server.mjs\`），仅在 demo 期间生效。
 3. 如果产品需要登录，**生成 \`scenario.auth.storageState\`** 让 runner 直接以登录态进入 dashboard，不用录"手动登录"那一段。对邮箱 OTP 项目：直接从 Node 调 \`/api/auth/send-code\` + \`/api/auth/verify-code\`（dev fallback 通常会把 OTP 打到 server console 而不是真发邮件），把拿到的 cookie 保存成 storageState JSON，指给 \`auth.storageState\` 用。
-4. mock 模式可以放心 \`scenario.data.strategy=ui-write\` 和 \`cleanup=true\`。在 \`flow.steps\` 里按需加 fill/click/waitForApi。
-5. 字幕和旁白可以提"示例数据 / 演示账号"，但**不要**说 \`mock\`、\`fixture\`、\`renderer-only\`、内部边界、dev warning 等内部词（\`narrative.avoidVisibleTerms\` 会强制校验）。`
+4. **演示账号预热**——见下方「演示账号预热」段。**这一步常被漏掉**：新建的 demo 账号会在每个 dashboard 页面触发首登 onboarding modal / 隐私同意 / 新人引导，全程挡在镜头前，让人误以为 runner 没进 dashboard。
+5. mock 模式可以放心 \`scenario.data.strategy=ui-write\` 和 \`cleanup=true\`。在 \`flow.steps\` 里按需加 fill/click/waitForApi。
+6. 字幕和旁白可以提"示例数据 / 演示账号"，但**不要**说 \`mock\`、\`fixture\`、\`renderer-only\`、内部边界、dev warning 等内部词（\`narrative.avoidVisibleTerms\` 会强制校验）。
+
+### 演示账号预热（\`scenario.preflight.steps\`）
+
+新建的演示账号通常带着没完成的首登 gate：onboarding 弹窗、隐私同意 banner、"新人引导"浮层、空状态占位图。这些都会叠在每个 dashboard 页面上方，让录出来的视频看起来像是"runner 只录到了 onboarding 弹窗"。
+
+用 \`scenario.preflight.steps\` 在**正式录制开始之前**关掉它们。preflight 跟正式录制共用同一个浏览器上下文（cookie / localStorage / session 都生效），但**不会进入视频、字幕、report 时间线**。支持的 step 类型：\`goto / click / fill / wait / fetch\`。
+
+最干净的写法：直接 fetch 项目的 profile API：
+
+\`\`\`json
+"preflight": {
+  "steps": [
+    {
+      "type": "fetch",
+      "method": "PATCH",
+      "url": "/api/user/profile",
+      "body": { "onboardingComplete": true },
+      "expectOk": true
+    }
+  ]
+}
+\`\`\`
+
+如果 modal 是纯前端控制（没有 API），用 click 走完：
+
+\`\`\`json
+"preflight": {
+  "steps": [
+    { "type": "goto", "url": "/dashboard" },
+    { "type": "click", "selector": "[data-testid=onboarding-skip]" },
+    { "type": "wait", "selector": "[data-testid=dashboard-ready]", "state": "visible" }
+  ]
+}
+\`\`\`
+
+如果 gate 状态存在 \`localStorage\` 里，**优先**把对应的 entry 写进 \`auth.storageState\` 的 \`origins[].localStorage\` 数组——比每次录制都点一遍要快。`
 }
 
 function buildGuide(args, scenario, scenarioPath, scriptPath) {
