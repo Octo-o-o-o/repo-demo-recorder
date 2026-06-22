@@ -105,7 +105,27 @@ node <skill>/scripts/add-tts-narration.mjs \
 
 `--engine edge-tts` 需要 `uvx` 和网络（会把文本发到 Microsoft Edge online TTS）。离线时改 `--engine macos-say`，voice 不存在会自动 fallback。
 
-## 4. 生成封面（含候选 contact sheet）
+## 4. 多段合并与段间子封面
+
+如果最终视频由多段录制片段组成，先逐段录制、逐段审片、逐段加 TTS，然后合并。只有 2 段及以上时会插入低强度段间子封面；只有 1 段时脚本会直接复制输出，不加中间转场。
+
+```bash
+node <skill>/scripts/assemble-segmented-video.mjs \
+  --out docs/recordings/full-walkthrough-narrated.mp4 \
+  --segment docs/recordings/core-narrated.mp4 \
+  --segment-title "核心浏览路径" \
+  --segment-report docs/recordings/core-report.json \
+  --segment docs/recordings/add-data-narrated.mp4 \
+  --segment-title "新增数据流程" \
+  --segment-report docs/recordings/add-data-report.json \
+  --transition-duration-ms 1100 \
+  --report docs/recordings/full-walkthrough-assemble-report.json \
+  --combined-report docs/recordings/full-walkthrough-report.json
+```
+
+子封面会使用下一段视频的真实抽帧作为背景，并沿用主封面的色彩/字体，但只显示「接下来」、下一段标题和一句短提示，视觉层级低于片头主封面。合并后的 `full-walkthrough-report.json` 会把原分段 report 的时间轴整体平移，并把子封面写成 `kind: "transition"`、`narration: false` 的 cue，便于 frame review 抽帧检查。
+
+## 5. 生成封面（含候选 contact sheet）
 
 桌面 16:9：
 
@@ -134,7 +154,7 @@ node <skill>/scripts/generate-video-cover.mjs \
 
 Playwright 不可用时自动退化到 ffmpeg drawtext 或纯抽帧（详见 README）。
 
-## 5. 嵌入封面 + 删空白
+## 6. 嵌入封面 + 删空白
 
 ```bash
 node <skill>/scripts/embed-video-cover.mjs \
@@ -159,7 +179,7 @@ node <skill>/scripts/trim-video-gap.mjs \
   --report docs/recordings/add-data-flow-gap-trim-report.json
 ```
 
-## 6. 质量门禁 + 审片页
+## 7. 质量门禁 + 审片页
 
 ```bash
 node <skill>/scripts/validate-recording-report.mjs \
@@ -188,7 +208,7 @@ node <skill>/scripts/generate-review-page.mjs \
   --out docs/recordings/add-data-flow-review.html
 ```
 
-## 7. 包装 / Screen Studio 交接
+## 8. 包装 / Screen Studio 交接
 
 ```bash
 node <skill>/scripts/polish-video.mjs \

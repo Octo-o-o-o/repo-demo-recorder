@@ -150,6 +150,12 @@
 - `segmented`：每个模块独立 MP4/WebM/report/review，全部通过后再合并。正式 demo 默认使用。
 - `segmented-with-rerecord`：逐段 review，发现遮挡、过渡瑕疵、字幕不合适、接口错误时只重录该段。客户可发版默认使用。
 
+多段合并默认使用 `assemble-segmented-video.mjs`：
+
+- 只有 1 个 segment 时不加中间转场，直接复制输出。
+- 2 个及以上 segment 时，在段间插入短子封面，提示下一段标题。
+- 子封面沿用主封面的真实抽帧、暗化背景、字体和色彩，但视觉强度更低，默认 0.8-1.2 秒，不做新的片头。
+
 ## 输出
 
 - `mp4`：稳定主产物。
@@ -165,6 +171,8 @@
 - `cover-candidates`：候选封面与 contact sheet。
 - `cover-intro`：把封面写成视频开头的真实画面，解决播放器不显示 `attached_pic` 的情况。
 - `cover-embed-report`：MP4 `attached_pic` 封面嵌入验证报告。
+- `segment-transition-cover`：多段视频合并时的段间子封面；单段视频不生成。
+- `assembly-report`：多段合并报告，记录 segment 数量、子封面位置、输出时长和 shifted combined report。
 - `gap-trim-report`：删除封面后空白/loading 片段后的时间轴修正报告。
 - `review-html`：本地审片页。
 - `polished-mp4`：基础包装后的最终交付 MP4。
@@ -191,6 +199,7 @@
   "highlight": { "enabled": true, "holdMs": 320, "clearBeforeAction": true },
   "overlay": { "animation": "safe-opacity", "settleMs": 160, "chapterBanner": false },
   "segmentation": "segmented",
+  "segmentTransitionCover": { "enabled": "auto", "durationMs": 1100 },
   "cover": { "enabled": true, "mode": "with-candidates", "width": 1280, "height": 720 },
   "postProduction": { "reviewPage": true, "polishPreset": "customer-desktop", "screenStudioHandoff": false }
 }

@@ -104,12 +104,13 @@ if (existsSync(destRoot)) {
 
 if (!args.dryRun) await mkdir(destRoot, { recursive: true })
 
-// 复制 skill 运行时需要的全部资源，与 package.json `files` 字段保持一致：
+// 复制 skill 运行时需要的全部资源，并带上自检所需的仓库元数据：
 // - SKILL.md / references / scripts：skill 的核心
 // - agents/openai.yaml：Codex 的可选 manifest（Claude Code 会忽略，无副作用）
 // - scripts/templates：scaffold-repo-demo.mjs 运行时会读取这里的 playwright runner template
+// - package.json / .gitignore：check-skill.mjs 在安装目录里也能完整自检
 // - README.md / LICENSE：方便用户在安装目录里直接查阅文档与许可证
-for (const item of ["SKILL.md", "README.md", "LICENSE", "agents", "references", "scripts"]) {
+for (const item of ["SKILL.md", "README.md", "LICENSE", "package.json", ".gitignore", "agents", "references", "scripts"]) {
   await copyRuntimeFile(item, destRoot, args.dryRun)
 }
 

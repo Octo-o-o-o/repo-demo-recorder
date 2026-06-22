@@ -75,7 +75,13 @@
     "enabled": true,
     "reviewEachSegment": true,
     "mergeAfterPass": true,
-    "rerecordOnFailure": true
+    "rerecordOnFailure": true,
+    "transitionCover": {
+      "enabled": "auto",
+      "durationMs": 1100,
+      "style": "subtle-subcover",
+      "label": "接下来"
+    }
   },
   "preflight": {
     "steps": []
@@ -117,7 +123,10 @@
     "coverCandidates": true,
     "coverIntro": true,
     "coverEmbedReport": true,
-    "gapTrimReport": true
+    "gapTrimReport": true,
+    "assembledMp4": true,
+    "assemblyReport": true,
+    "segmentTransitionCovers": true
   },
   "postProduction": {
     "polishPreset": "customer-desktop",
@@ -201,6 +210,9 @@
 - 每段通过后再继续下一段。
 - 某段失败时只重录该段。
 - 全部通过后再合并，合并后重新做媒体校验和抽帧复查。
+- `transitionCover.enabled="auto"`：只有 2 段及以上时在段间插入子封面；1 段时不加。
+- `transitionCover.durationMs`：段间子封面时长，默认约 1100ms。客户可发版一般保持 800-1200ms，避免打断观看。
+- 子封面用于提示下一段标题，必须沿用主封面的真实录屏抽帧、色彩和字体，但标题更小、文案更短、无强 badge，让它看起来像同一条视频里的转场。
 
 ## PostProduction 字段
 

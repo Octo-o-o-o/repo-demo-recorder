@@ -576,7 +576,13 @@ function buildScenario(args, detection = null) {
       enabled: args.polish !== "quick-proof",
       reviewEachSegment: args.polish !== "quick-proof",
       mergeAfterPass: args.polish !== "quick-proof",
-      rerecordOnFailure: args.polish === "customer-ready"
+      rerecordOnFailure: args.polish === "customer-ready",
+      transitionCover: {
+        enabled: "auto",
+        durationMs: 1100,
+        style: "subtle-subcover",
+        label: isZh ? "接下来" : "Next"
+      }
     },
     // preflight：在正式录制开始之前先跑一组步骤（不入镜、不入 report.captions/steps），
     // 用来把演示账号"预热"到一个适合录制的状态——例如关掉 first-run modal / 同意条款 /
@@ -655,7 +661,10 @@ function buildScenario(args, detection = null) {
       coverCandidates: args.polish !== "quick-proof",
       coverIntro: args.polish !== "quick-proof",
       coverEmbedReport: args.polish !== "quick-proof",
-      gapTrimReport: args.polish !== "quick-proof"
+      gapTrimReport: args.polish !== "quick-proof",
+      assembledMp4: args.polish !== "quick-proof",
+      assemblyReport: args.polish !== "quick-proof",
+      segmentTransitionCovers: args.polish !== "quick-proof"
     },
     postProduction: {
       polishPreset: isPortrait ? "customer-mobile" : "customer-desktop",
@@ -1061,6 +1070,16 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 > \`--pad-mode freeze\`（默认）会在某段 TTS 超过窗口长度时，自动在那段 cue 末尾插入冻结帧让配音读完，并把后续 cue 时间轴整体后移。生成的 narration-report 里有 \`timeline.totalPaddingMs\` 和每段的 \`paddingMs\` 可供查证。如果某段 padding 超过 \`--max-padding-ms\`（默认 60000）会 fail-fast，请缩短该段文案。
 > \`engine=edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。不能使用在线 TTS 时，把 \`scenario.narration.engine\` 改成 \`macos-say\`、voice 改成 \`Tingting\` 即可。
 
+## 多段合并与段间子封面
+
+如果最终视频由多段 MP4 拼成，先逐段录制、逐段审片、逐段加 TTS，然后用下面命令合并。只有传入 2 段及以上时才会自动插入段间子封面；只有 1 段时脚本会直接复制输出，不增加中间转场。
+
+\`\`\`bash
+node <skill>/scripts/assemble-segmented-video.mjs --out ${args.out}/${args.name}-assembled.mp4 --segment ${args.out}/${args.name}-narrated.mp4 --segment-title "${coverTitle}" --segment-report ${args.out}/${args.name}-report.json --combined-report ${args.out}/${args.name}-assembled-report.json --transition-duration-ms ${scenario.segmentation.transitionCover.durationMs}
+\`\`\`
+
+多段时为每个 segment 重复追加 \`--segment <mp4> --segment-title "下一段标题" --segment-report <json>\`。段间子封面会沿用主封面的色彩、字体和真实录屏抽帧，但强度更低，只显示 \`${scenario.segmentation.transitionCover.label}\`、下一段标题和短提示，默认约 1.1 秒；它是同一条 walkthrough 内的转场，不是新的片头。
+
 ## 生成封面
 
 正式交付建议生成标准 ${coverRatioText} 封面，并先查看候选图：
@@ -1214,6 +1233,16 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 > \`--scenario\` makes the script read \`narration.engine\` / \`voice\` / \`rate\` / \`padMode\` / \`padBufferMs\` from \`${scenarioPath}\` (this scenario defaults to \`engine=${scenario.narration.engine}\`, \`voice=${scenario.narration.voice}\`). Change the engine or voice by editing the scenario; you don't need to rewrite the command every time. Explicit CLI flags (e.g. \`--engine\`, \`--voice\`) still override.
 > \`--pad-mode freeze\` (default) inserts cloned freeze frames at the end of any cue whose TTS audio is longer than its display window, and shifts subsequent cues. The narration-report exposes \`timeline.totalPaddingMs\` and per-cue \`paddingMs\`. A cue that needs more than \`--max-padding-ms\` (default 60000) fails fast; shorten that cue's text.
 > \`engine=edge-tts\` needs \`uvx\` and network access; it sends the text to Microsoft Edge online TTS. Offline? Set \`scenario.narration.engine\` to \`macos-say\` and \`voice\` to \`Tingting\` (or any voice from \`say -v ?\`).
+
+## Assemble Segments And In-Video Transition Covers
+
+If the final video is assembled from multiple MP4 segments, record, review, and narrate each segment first, then merge them with this command. The script only inserts in-between transition covers when it receives 2+ segments; with a single segment it copies the video through without adding a middle slate.
+
+\`\`\`bash
+node <skill>/scripts/assemble-segmented-video.mjs --out ${args.out}/${args.name}-assembled.mp4 --segment ${args.out}/${args.name}-narrated.mp4 --segment-title "${coverTitle}" --segment-report ${args.out}/${args.name}-report.json --combined-report ${args.out}/${args.name}-assembled-report.json --transition-duration-ms ${scenario.segmentation.transitionCover.durationMs}
+\`\`\`
+
+For multiple segments, repeat \`--segment <mp4> --segment-title "Next segment title" --segment-report <json>\` in playback order. The transition cover reuses the main cover's color, type, and real recording frames, but stays lower-intensity: it shows \`${scenario.segmentation.transitionCover.label}\`, the next segment title, and one short line for about 1.1s. Treat it as a handoff inside one walkthrough, not a second intro.
 
 ## Generate Cover
 

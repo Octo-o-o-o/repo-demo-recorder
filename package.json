@@ -42,6 +42,7 @@
     "repo-demo-validate": "./scripts/validate-recording-report.mjs",
     "repo-demo-cover": "./scripts/generate-video-cover.mjs",
     "repo-demo-embed-cover": "./scripts/embed-video-cover.mjs",
+    "repo-demo-assemble": "./scripts/assemble-segmented-video.mjs",
     "repo-demo-trim-gap": "./scripts/trim-video-gap.mjs",
     "repo-demo-review": "./scripts/generate-review-page.mjs",
     "repo-demo-polish": "./scripts/polish-video.mjs",

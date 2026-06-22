@@ -11,6 +11,7 @@ It is designed for repository-native demo work where a video should be repeatabl
 - Record stable MP4/WebM walkthroughs with open captions and optional sidecar subtitles.
 - Add TTS narration with automatic freeze-frame padding when speech is longer than the original cue window.
 - Generate standard video covers from real recording frames: 16:9 for desktop demos, 9:16 for mobile demos, including candidate contact sheets.
+- Assemble multi-segment recordings and automatically insert subtle in-video transition covers between segments; single-segment videos pass through without a middle slate.
 - Embed the cover PNG into the final MP4 as an `attached_pic` stream so players can use it as the video thumbnail.
 - Trim accidental blank/loading gaps after the cover intro while keeping narration timing and cover art synchronized.
 - Validate page errors, response errors, horizontal overflow, audio presence, audio volume, video dimensions, and narration timing.
@@ -74,10 +75,11 @@ For projects that **cannot** be driven by Playwright — iOS / macOS / Android /
 1. Record a raw MP4 with whatever tool fits the platform.
 2. Hand-write a minimal `report.json` next to the video (only `captions[]`, `steps`, `consoleMessages`, `pageErrors`, `responseErrors` are required; see `references/quality-gates.md` for the schema).
 3. `add-tts-narration.mjs` adds TTS (use `--engine edge-tts --voice zh-CN-YunyangNeural` for mobile portrait demos).
-4. `generate-video-cover.mjs --theme mobile --width 1080 --height 1920` (or desktop defaults) produces the cover + candidate contact sheet.
-5. `embed-video-cover.mjs --intro-duration-ms 2000` embeds the cover; `trim-video-gap.mjs` removes any blank intro tail.
-6. `validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` runs the media gate.
-7. `generate-review-page.mjs` writes a single HTML reviewers can open.
+4. If the final walkthrough is made from multiple segment MP4s, `assemble-segmented-video.mjs` merges them and inserts low-intensity transition covers only between segments.
+5. `generate-video-cover.mjs --theme mobile --width 1080 --height 1920` (or desktop defaults) produces the main cover + candidate contact sheet.
+6. `embed-video-cover.mjs --intro-duration-ms 2000` embeds the main cover; `trim-video-gap.mjs` removes any blank intro tail.
+7. `validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` runs the media gate.
+8. `generate-review-page.mjs` writes a single HTML reviewers can open.
 
 ## Recording in an isolated worktree (recommended)
 

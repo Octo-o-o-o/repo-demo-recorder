@@ -101,11 +101,12 @@ skill 内置的脚本化录制路径依赖 Playwright 自动驱动浏览器，�
 外部录屏接入工作流（不跑 `scaffold-repo-demo.mjs` 也能用）：
 
 1. 用上述外部工具录得 raw MP4，建议同时手写一份 `report.json`（只需 `captions[].title/body/startMs/endMs/kind` 与 `steps:[]`、`consoleMessages:[]`、`pageErrors:[]`、`responseErrors:[]` 几个最小字段，参考 `references/quality-gates.md` 中 "Report 最小字段"）。
-2. 用 `scripts/add-tts-narration.mjs` 加解说；竖屏录屏直接传 `--engine edge-tts --voice zh-CN-YunyangNeural`。
-3. 用 `scripts/generate-video-cover.mjs --theme mobile --width 1080 --height 1920` 抽帧生成候选封面。
-4. 用 `scripts/embed-video-cover.mjs --intro-duration-ms 2000` 嵌入封面，并按需 `trim-video-gap.mjs` 删除片头空白。
-5. 用 `scripts/validate-recording-report.mjs --require-cover-art --expect-width <width> --expect-height <height>` 跑媒体级校验。
-6. 用 `scripts/generate-review-page.mjs` 输出审片页；客户可发版用 `scripts/prepare-screen-studio-handoff.mjs` 打包给 Screen Studio。
+2. 用 `scripts/add-tts-narration.mjs` 加解说；客户可发版优先 Edge TTS（中文用 `edge-tts` + `zh-CN-YunyangNeural`），竖屏录屏也直接传 `--engine edge-tts --voice zh-CN-YunyangNeural`。
+3. 如果 raw/narrated MP4 是多段产物，用 `scripts/assemble-segmented-video.mjs` 合并；只有 2 段及以上才插入段间子封面，单段会直接复制输出、不加中间转场。
+4. 用 `scripts/generate-video-cover.mjs --theme mobile --width 1080 --height 1920` 抽帧生成候选主封面。
+5. 用 `scripts/embed-video-cover.mjs --intro-duration-ms 2000` 嵌入主封面，并按需 `trim-video-gap.mjs` 删除片头空白。
+6. 用 `scripts/validate-recording-report.mjs --require-cover-art --expect-width <width> --expect-height <height>` 跑媒体级校验。
+7. 用 `scripts/generate-review-page.mjs` 输出审片页；客户可发版用 `scripts/prepare-screen-studio-handoff.mjs` 打包给 Screen Studio。
 
 scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/project.yml/build.gradle` 并打印警告：generated runner 不能驱动原生 UI，请改走外部录屏接入工作流，并忽略 scenario 中的 `server/auth/healthPath` 字段。
 
@@ -132,15 +133,16 @@ scaffold 跑在原生项目根目录时会自动识别 `.xcodeproj/.xcworkspace/
 4. **准备数据**：涉及 DB 写入前先备份；用 seed/upsert 创建稳定演示数据；避免生产数据和敏感信息入镜。客户可见内容使用“示例数据/演示租户”，不要把“mock/fixture”写进字幕或旁白。
 5. **实现录制脚本**：优先 Playwright。字幕用录屏安全 DOM overlay 或后期字幕文件；解说从 captions/narration 生成；高亮只短暂提示，点击/输入前立即清除。`page.goto` 默认 `waitUntil="domcontentloaded"`，**不要在 Next.js/Vite dev 项目里用 `networkidle`**（HMR/long-poll 永远不 idle）。需要等数据加载完时用 `step.wait` + selector，或在 `step.waitForApi` 中指定关键 API。
 6. **分段录制真实流程**：操作必须像真实用户；关键页面保留自然停留时间；表单数据要业务化，不要 `test/test`。正式交付默认一段一录、一段一 review；失败或画面不专业时重录该段，不把失败片段合进最终视频。
-7. **补 TTS 解说**：对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成音频并 mux；解说补充业务价值和验收点，不逐字朗读字幕或按钮。旁白时间应从 overlay 稳定后开始。
-8. **质量门禁**：检查 API POST 成功、页面无横向溢出、`pageErrors=[]`、高亮不滞留、允许的 404 有明确 allowlist，并做媒体级校验。
-9. **生成并嵌入封面**：正式交付生成 `<name>-cover.png` 和 `<name>-cover-report.json`；客户可发版先输出候选封面 contact sheet，再选择最能代表完整产品价值的帧；最终 MP4 必须用 `embed-video-cover.mjs` 嵌入 `attached_pic` 封面流，并在质量门禁中要求 `--require-cover-art`。如果用户期望“打开视频就看到封面”，还必须加 `--intro-duration-ms 2000` 把封面作为真实开场画面写入视频，并同步后移 narration VTT/report。封面后如果出现 loading/白屏/空白等待，必须用 `trim-video-gap.mjs` 删除空白段，并再次抽帧确认封面后直接进入有效画面。
-10. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
-11. **生成审片页**：正式交付默认生成 review HTML，把视频、字幕时间线、质量门禁、封面候选和过渡帧放在同一页，便于逐段判断是否重录。
-12. **基础包装或专业交接**：skill 只做稳定的背景、尺寸、padding 和导出 preset；需要自然缩放、光标平滑、设备模型、复杂时间线时，生成 Screen Studio handoff 包交给专业软件处理。
-13. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面选择、复验结果、如何重录。
-14. **回收 worktree**：在主工作树（或任何位置）跑 `cleanup-recording-worktree.mjs --worktree <worktreePath>`，把 `docs/recordings/` 和 `scripts/recordings/` 拷回主工作树并 `git worktree remove --force`；如果还想在 worktree 内调试，加 `--keep`，确认后再来一次不带 `--keep` 收尾。
-15. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
+7. **补 TTS 解说**：对正式 demo 默认生成 transcript/VTT；客户可发版优先用 Edge TTS（`edge-tts`，中文首选 `zh-CN-YunyangNeural`）合成音频并 mux。只有隐私/合规不允许在线 TTS、无网络或用户明确要求离线时，才回退 macOS `say` / local-system。解说补充业务价值和验收点，不逐字朗读字幕或按钮。旁白时间应从 overlay 稳定后开始。
+8. **合并多段视频**：如果最终视频由多段 MP4 组成，在所有 segment 逐段通过后用 `assemble-segmented-video.mjs` 合并。脚本必须根据 segment 数量判断：1 段不加中间转场，2 段及以上在段间插入短子封面，提示“接下来/Next”与下一段标题，并输出 assemble report / combined report。
+9. **质量门禁**：检查 API POST 成功、页面无横向溢出、`pageErrors=[]`、高亮不滞留、允许的 404 有明确 allowlist，并做媒体级校验。
+10. **生成并嵌入主封面**：正式交付生成 `<name>-cover.png` 和 `<name>-cover-report.json`；客户可发版先输出候选封面 contact sheet，再选择最能代表完整产品价值的帧；最终 MP4 必须用 `embed-video-cover.mjs` 嵌入 `attached_pic` 封面流，并在质量门禁中要求 `--require-cover-art`。如果用户期望“打开视频就看到封面”，还必须加 `--intro-duration-ms 2000` 把主封面作为真实开场画面写入视频，并同步后移 narration VTT/report。封面后如果出现 loading/白屏/空白等待，必须用 `trim-video-gap.mjs` 删除空白段，并再次抽帧确认封面后直接进入有效画面。
+11. **媒体级验证和抽帧复查**：用 `ffprobe/ffmpeg` 校验 MP4 可解码、尺寸/帧率符合预期、有非静音音轨、音视频时长比例正常、字幕/解说稿/report 都落地。正式交付还要围绕字幕/章节横幅/段间子封面的开始、结束时间抽帧，确认没有半截遮罩、跳动、遮挡关键控件。
+12. **生成审片页**：正式交付默认生成 review HTML，把视频、字幕时间线、质量门禁、封面候选和过渡帧放在同一页，便于逐段判断是否重录。
+13. **基础包装或专业交接**：skill 只做稳定的背景、尺寸、padding 和导出 preset；需要自然缩放、光标平滑、设备模型、复杂时间线时，生成 Screen Studio handoff 包交给专业软件处理。
+14. **落文档**：记录命令、环境、产物路径、已知噪声、DB 备份、封面/子封面选择、复验结果、如何重录。
+15. **回收 worktree**：在主工作树（或任何位置）跑 `cleanup-recording-worktree.mjs --worktree <worktreePath>`，把 `docs/recordings/` 和 `scripts/recordings/` 拷回主工作树并 `git worktree remove --force`；如果还想在 worktree 内调试，加 `--keep`，确认后再来一次不带 `--keep` 收尾。
+16. **提交策略**：只在用户要求时 commit/push；只暂存脚本、指南、录屏产物和相关日志，避开无关脏改。
 
 ## 演示账号预热（preflight.steps）
 
@@ -216,6 +218,8 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - 标题在小尺寸列表页中也要可读；不要超过两行，不使用负 letter spacing，不遮挡 UI 主视觉。
 - 封面帧优先选择能代表整体工作流的入口页、Dashboard、Home 或核心结果页；手机端优先选择首屏可读、底部导航和主 CTA 不被遮挡的画面。避免选择设置页、登录页、错误态、loading、信息过密邮件页，除非视频主题就是这些内容。
 - 正式交付应生成候选封面 contact sheet，并在 guide/report 中记录最终选择理由。
+- 段间子封面只用于多段合并视频：1 段视频不加，2 段及以上在每两个 segment 之间加一个短转场。子封面提示下一段标题，默认 0.8-1.2 秒，不作为新的片头。
+- 子封面必须与主封面同一视觉系统（真实录屏抽帧、同色彩/字体/暗化背景），但层级更低：标题更小、文案更短、无候选 contact sheet、无大幅 badge，不让观众以为换了一个视频。
 
 ## 后期边界
 
@@ -231,11 +235,11 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - 对写入型录屏，必须先备份 DB，并在 report 中写入 demo data 名称和落库验证。
 - 对字幕和高亮，宁可克制：字幕不遮挡主要控件，高亮展示 200-400ms，之后立即隐藏。
 - 对客户可发版，模块切换可用更显眼的章节横幅，但必须采用录屏安全 overlay 规则，并抽帧检查出现/收起过渡。
-- 对 TTS 解说，先生成 transcript，再合成音频并 mux 到视频；没有明确授权时不要调用外部云端 TTS。
+- 对 TTS 解说，先生成 transcript，再合成音频并 mux 到视频；客户可发版优先 Edge TTS。Edge 是在线 TTS，会把解说文本发送到 Microsoft；涉及敏感文本且没有明确授权时，不调用外部云端 TTS，改用本机语音。
 - 解说要补充业务价值，不逐字朗读按钮；中文默认用 `zh-CN` 声音，保留 0.8-1.2 秒自然间隔。
 - 对带 TTS 的最终视频，必须验证音轨不是静音：`max_volume` 默认应高于 `-50 dB`，并输出 media report。
 - 合成 TTS 后必须 `ffprobe` 测每段音频时长。若 `audioMs + padBuffer` 超过该段 cue 的展示窗口（`cue.startMs` 到下一个 `cue.startMs` 或视频结尾），自动在原 cue 末尾插入冻结帧（`tpad=stop_mode=clone`）并把后续 cue 的时间轴整体后移；同步把字幕 VTT、narration-report 的时间码改为延长后的坐标。默认 `--pad-mode freeze --pad-buffer-ms 300 --max-padding-ms 60000`，单段超限时不要默默截断音频，而要 fail-fast 让人缩短文案。
-- 如果同一任务有“核心流程”和“新增数据流程”，优先输出两个单独 MP4，再拼接一个完整 walkthrough，避免单段脚本过长难以重录。
+- 如果同一任务有“核心流程”和“新增数据流程”，优先输出两个单独 MP4，再用 `assemble-segmented-video.mjs` 拼接一个完整 walkthrough；多段时插入段间子封面，单段时不加中间转场，避免单段脚本过长难以重录。
 - 对登录流程，优先使用本地 dev-login、storage state 或人工 auth handoff；不要录入真实密码。
 - 对商业/隐私数据，使用 blur、mock 数据或专用演示租户。
 - 对 CI/PR 录屏，优先固定 viewport、locale、timezone、seed、network allowlist。
@@ -248,6 +252,7 @@ DOM overlay 最容易决定视频是否专业。正式交付默认遵守：
 - `scripts/add-tts-narration.mjs`：从 report captions 生成 TTS 解说、VTT 解说稿，并合成带解说 MP4；支持 macOS `say` 和 `edge-tts`。
 - `scripts/generate-video-cover.mjs`：从视频抽帧生成标准封面，桌面端 16:9、手机端 9:16，可生成候选封面 contact sheet。
 - `scripts/embed-video-cover.mjs`：把封面 PNG 作为 MP4 `attached_pic` 流嵌入最终视频；可用 `--intro-duration-ms` 添加肉眼可见的封面开场，并同步后移 narration VTT/report。
+- `scripts/assemble-segmented-video.mjs`：合并多个 segment MP4；1 段时直接复制输出，2 段及以上自动插入低强度段间子封面，并可生成 shifted combined report。
 - `scripts/trim-video-gap.mjs`：删除封面后、转场中或录屏开头的空白片段，并同步后移/前移 narration VTT/report，保留封面流。
 - `scripts/validate-recording-report.mjs`：校验 report JSON 的高亮、溢出、page error、response allowlist，并可生成字幕/章节过渡抽帧 contact sheet。
 - `scripts/generate-review-page.mjs`：生成本地审片 HTML，集中查看视频、字幕时间线、封面候选、frame review 和质量门禁结果。
@@ -276,6 +281,10 @@ docs/recordings/
   <flow>-narrated.mp4
   <flow>-narrated-narration.vtt
   <flow>-narrated-narration-report.json
+  <flow>-assembled.mp4
+  <flow>-assemble-report.json
+  <flow>-segments/
+    transition-01-cover.png
   <flow>-media-report.json
   <flow>-cover.png
   <flow>-cover-report.json
@@ -300,7 +309,8 @@ docs/recordings/
 0. `prepare-recording-worktree.mjs` 在目标项目里开 worktree，cd 进去；不是 git 仓库则跳过本步。
 1. `scaffold-repo-demo.mjs` 生成 scenario + runner + guide。
 2. 跑 generated runner 录原始 MP4 + report.json。
-3. `add-tts-narration.mjs` 加解说，`generate-video-cover.mjs` 抽帧出封面，`embed-video-cover.mjs` 把封面嵌入 MP4，`trim-video-gap.mjs` 删开场空白。
-4. `validate-recording-report.mjs` 做质量门禁与抽帧复查。
-5. `generate-review-page.mjs` 输出本地审片 HTML；客户可发版用 `polish-video.mjs` 或 `prepare-screen-studio-handoff.mjs` 做最后包装。
-6. `cleanup-recording-worktree.mjs` 把产物拷回主工作树并删 worktree。
+3. `add-tts-narration.mjs` 加解说；多段视频先用 `assemble-segmented-video.mjs` 合并并自动处理段间子封面。
+4. `generate-video-cover.mjs` 抽帧出主封面，`embed-video-cover.mjs` 把主封面嵌入 MP4，`trim-video-gap.mjs` 删开场空白。
+5. `validate-recording-report.mjs` 做质量门禁与抽帧复查。
+6. `generate-review-page.mjs` 输出本地审片 HTML；客户可发版用 `polish-video.mjs` 或 `prepare-screen-studio-handoff.mjs` 做最后包装。
+7. `cleanup-recording-worktree.mjs` 把产物拷回主工作树并删 worktree。

@@ -70,6 +70,7 @@ async function checkRequiredFiles() {
     "scripts/add-tts-narration.mjs",
     "scripts/generate-video-cover.mjs",
     "scripts/embed-video-cover.mjs",
+    "scripts/assemble-segmented-video.mjs",
     "scripts/trim-video-gap.mjs",
     "scripts/generate-review-page.mjs",
     "scripts/polish-video.mjs",
@@ -106,6 +107,7 @@ async function checkScriptSyntax() {
     "scripts/add-tts-narration.mjs",
     "scripts/generate-video-cover.mjs",
     "scripts/embed-video-cover.mjs",
+    "scripts/assemble-segmented-video.mjs",
     "scripts/trim-video-gap.mjs",
     "scripts/generate-review-page.mjs",
     "scripts/polish-video.mjs",
@@ -147,6 +149,7 @@ async function checkPackageBins() {
     "repo-demo-validate": "./scripts/validate-recording-report.mjs",
     "repo-demo-cover": "./scripts/generate-video-cover.mjs",
     "repo-demo-embed-cover": "./scripts/embed-video-cover.mjs",
+    "repo-demo-assemble": "./scripts/assemble-segmented-video.mjs",
     "repo-demo-trim-gap": "./scripts/trim-video-gap.mjs",
     "repo-demo-review": "./scripts/generate-review-page.mjs",
     "repo-demo-polish": "./scripts/polish-video.mjs",
@@ -200,6 +203,9 @@ async function checkDocumentationConsistency() {
   if (!/--data-mode mock/.test(commands)) {
     fail("references/commands.md scaffold examples should pass --data-mode mock explicitly")
   }
+  if (!/assemble-segmented-video\.mjs/.test(commands)) {
+    fail("references/commands.md should document multi-segment assembly and transition covers")
+  }
 
   const readme = await readFile(path.join(repoRoot, "README.md"), "utf8")
   if (/bin entries for every script/.test(readme)) {
@@ -238,6 +244,12 @@ async function checkScaffoldSmoke() {
     if (scenario.audience !== "customer") fail("Scaffold did not preserve audience=customer")
     if (scenario.overlay?.animation !== "safe-opacity") fail("Scaffold did not default to safe overlay")
     if (!scenario.review?.writeFrameReview) fail("Scaffold did not enable frame review for customer-ready")
+    if (scenario.segmentation?.transitionCover?.enabled !== "auto") {
+      fail("Scaffold should emit segmentation.transitionCover.enabled=auto for formal/customer recordings")
+    }
+    if (scenario.outputs?.segmentTransitionCovers !== true) {
+      fail("Scaffold should enable segment transition cover artifacts for formal/customer recordings")
+    }
     // 死字段 server.port 已被移除（runner 只用 baseUrl）
     if (Object.prototype.hasOwnProperty.call(scenario.server || {}, "port")) {
       fail("Scaffold should not write deprecated scenario.server.port field")
@@ -588,6 +600,163 @@ async function checkEmbedCoverSmoke() {
       "--video",
       trimmedNoCover,
       "--require-cover-art"
+    ])
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+}
+
+async function checkSegmentAssemblySmoke() {
+  if (!commandExists("ffmpeg") || !commandExists("ffprobe")) {
+    console.warn("[check] skipping segment assembly smoke because ffmpeg/ffprobe is unavailable")
+    return
+  }
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "repo-demo-recorder-assemble-"))
+  try {
+    const segmentOne = path.join(tempRoot, "segment-one.mp4")
+    const segmentTwo = path.join(tempRoot, "segment-two.mp4")
+    const reportOne = path.join(tempRoot, "segment-one-report.json")
+    const reportTwo = path.join(tempRoot, "segment-two-report.json")
+    const singleOut = path.join(tempRoot, "single-out.mp4")
+    const singleReport = path.join(tempRoot, "single-assemble-report.json")
+    const assembledOut = path.join(tempRoot, "assembled.mp4")
+    const assemblyReport = path.join(tempRoot, "assembled-assemble-report.json")
+    const combinedReport = path.join(tempRoot, "assembled-report.json")
+
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=navy:s=320x180:d=0.7",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:duration=0.7",
+      "-shortest",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      segmentOne
+    ])
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=teal:s=320x180:d=0.8",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=660:duration=0.8",
+      "-shortest",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      segmentTwo
+    ])
+    await writeFile(
+      reportOne,
+      `${JSON.stringify(
+        {
+          scenario: "segment-one",
+          language: "zh-CN",
+          captions: [{ title: "第一段", body: "先看总览。", startMs: 50, endMs: 500 }],
+          steps: [{ label: "one", highlightVisible: false, overflow: 0, atMs: 500 }],
+          consoleMessages: [],
+          pageErrors: [],
+          responseErrors: []
+        },
+        null,
+        2
+      )}\n`
+    )
+    await writeFile(
+      reportTwo,
+      `${JSON.stringify(
+        {
+          scenario: "segment-two",
+          language: "zh-CN",
+          captions: [{ title: "第二段", body: "继续演示新增流程。", startMs: 80, endMs: 650 }],
+          steps: [{ label: "two", highlightVisible: false, overflow: 0, atMs: 650 }],
+          consoleMessages: [],
+          pageErrors: [],
+          responseErrors: []
+        },
+        null,
+        2
+      )}\n`
+    )
+
+    run("node", [
+      "scripts/assemble-segmented-video.mjs",
+      "--out",
+      singleOut,
+      "--segment",
+      segmentOne,
+      "--segment-title",
+      "第一段",
+      "--segment-report",
+      reportOne,
+      "--report",
+      singleReport
+    ])
+    const singleMeta = JSON.parse(await readFile(singleReport, "utf8"))
+    if (singleMeta.transitionCount !== 0 || singleMeta.skippedReason !== "single segment: no intermediate transition cover needed") {
+      fail("assemble single segment should not insert transition covers")
+    }
+
+    run("node", [
+      "scripts/assemble-segmented-video.mjs",
+      "--out",
+      assembledOut,
+      "--segment",
+      segmentOne,
+      "--segment-title",
+      "第一段",
+      "--segment-report",
+      reportOne,
+      "--segment",
+      segmentTwo,
+      "--segment-title",
+      "新增数据流程",
+      "--segment-report",
+      reportTwo,
+      "--transition-duration-ms",
+      "400",
+      "--report",
+      assemblyReport,
+      "--combined-report",
+      combinedReport
+    ])
+    const assembly = JSON.parse(await readFile(assemblyReport, "utf8"))
+    if (assembly.segmentCount !== 2 || assembly.transitionCount !== 1) {
+      fail(`assemble multi segment should insert exactly one transition (got ${assembly.transitionCount})`)
+    }
+    if (!assembly.transitions?.[0]?.cover || !existsSync(assembly.transitions[0].cover)) {
+      fail("assemble multi segment should write a transition cover PNG")
+    }
+    const merged = JSON.parse(await readFile(combinedReport, "utf8"))
+    if (!merged.captions?.some((cue) => cue.kind === "transition" && cue.narration === false)) {
+      fail("combined report should include a non-narrated transition cue")
+    }
+    run("node", [
+      "scripts/validate-recording-report.mjs",
+      combinedReport,
+      "--video",
+      assembledOut,
+      "--require-audio",
+      "--expect-width",
+      "320",
+      "--expect-height",
+      "180"
     ])
   } finally {
     await rm(tempRoot, { recursive: true, force: true })
@@ -1612,6 +1781,7 @@ async function checkInstallSkillSmoke() {
       "agents/openai.yaml",
       "references/options.md",
       "scripts/scaffold-repo-demo.mjs",
+      "scripts/assemble-segmented-video.mjs",
       "scripts/templates/playwright-runner.mjs"
     ]) {
       if (!existsSync(path.join(dest, item))) {
@@ -1692,6 +1862,7 @@ await checkReviewPageLangSmoke()
 await checkTtsArgValidationSmoke()
 await checkReviewAndHandoffSmoke()
 await checkEmbedCoverSmoke()
+await checkSegmentAssemblySmoke()
 await checkNarrationAndPolishSmoke()
 await checkWorktreeIsolationSmoke()
 await checkWorktreeRejectsNonGit()
