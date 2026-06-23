@@ -1,236 +1,163 @@
 # Repo Demo Recorder
 
-`repo-demo-recorder` is an [Agent Skill](https://docs.anthropic.com/en/docs/claude-code/skills) for turning local product demos into reproducible recording artifacts: scripted Playwright walkthroughs, realistic demo data, captions, narration, media reports, and frame-review proof.
+`repo-demo-recorder` 是一个面向 Claude Code、Codex、Cursor 和自定义 agent 的录屏技能与 CLI 工具集。它把“临时手动录屏”整理成可复现、可审片、可验证、可交付的工程产物：场景配置、Playwright 录制脚本、字幕、TTS 解说、封面、质量报告、审片页和可选后期交接包。
 
-It is designed for repository-native demo work where a video should be repeatable, reviewable, and safe to share with customers or stakeholders. It works equally well as a **Claude Code skill**, a **Codex skill**, or a set of standalone CLI tools driven by any agent (Claude API, Cursor, etc.).
+它适合为本地项目生成客户演示、工程验收、培训 SOP、发布证明和 UI QA 证据。对 Web 项目，它可以驱动浏览器完成真实流程；对 iOS、Android、桌面客户端和 CLI 项目，它也能接入外部录制好的 MP4，继续完成解说、封面、合并、校验和审片。
 
-## What It Helps With
+## 能做什么
 
-- Plan a product demo path for customers, internal reviews, QA proof, training, or release PRs.
-- Scaffold scenario JSON, a Playwright recorder, and a recording guide.
-- Record stable MP4/WebM walkthroughs with open captions and optional sidecar subtitles.
-- Add TTS narration with automatic freeze-frame padding when speech is longer than the original cue window.
-- Generate standard video covers from real recording frames: 16:9 for desktop demos, 9:16 for mobile demos, including candidate contact sheets.
-- Assemble multi-segment recordings and automatically insert subtle in-video transition covers between segments; single-segment videos pass through without a middle slate.
-- Embed the cover PNG into the final MP4 as an `attached_pic` stream so players can use it as the video thumbnail.
-- Trim accidental blank/loading gaps after the cover intro while keeping narration timing and cover art synchronized.
-- Validate page errors, response errors, horizontal overflow, audio presence, audio volume, video dimensions, and narration timing.
-- Generate frame-review contact sheets around caption/chapter transitions so overlays do not look half-rendered or unprofessional.
-- Generate a local review HTML page that brings together video, captions, cover candidates, frame review, and quality reports.
-- Apply conservative post-production presets, or prepare a Screen Studio handoff pack for professional zoom/cursor/timeline polish.
+- 为目标仓库生成 `docs/recordings/*.scenario.json`、Playwright runner 和 `RECORDING_GUIDE.md`。
+- 使用隔离的 git worktree 录制，避免污染用户主工作树、当前分支和 IDE 会话。
+- 明确区分 `mock`、`staging`、`production` 数据来源；生产录制必须显式授权并强制只读。
+- 支持 `preflight.steps`，在正式录制前关闭 onboarding、隐私 banner、首登弹窗等干扰。
+- 支持桌面、手机、平板和多端项目；手机默认竖屏 `1080x1920` 输出和移动端安全区字幕。
+- 从 report captions 生成 TTS 解说、VTT 和 narration report；默认用 freeze-frame padding 避免语音被截断。
+- 合并多段视频；只有多段时插入低强度段间子封面，单段直接透传。
+- 从真实录屏抽帧生成桌面 `16:9` 或手机 `9:16` 封面，并输出候选 contact sheet。
+- 把封面 PNG 嵌入 MP4 `attached_pic`，也可写入可见片头，并同步修正解说时间轴。
+- 删除封面后或转场中的 loading、白屏、黑屏空档，并保持 narration VTT/report 同步。
+- 校验页面错误、网络错误、横向溢出、API/DB 断言、音频、音量、尺寸、封面和关键过渡帧。
+- 生成本地 review HTML，把视频、字幕时间线、封面、候选帧、frame review 和质量报告集中到一页。
+- 输出保守后期 preset，或打包 Screen Studio handoff 给专业工具处理缩放、光标、设备框和时间线。
 
-## Use With Claude / Claude Code / Codex
-
-| Surface | How to invoke |
-| --- | --- |
-| **Claude Code** | `node scripts/install-skill.mjs --target claude --force` installs to `~/.claude/skills/repo-demo-recorder`. In a project, ask: *"Use repo-demo-recorder to record a customer-ready demo."* Claude Code loads `SKILL.md` automatically. |
-| **Codex CLI** | `node scripts/install-skill.mjs --force` installs to `$CODEX_HOME/skills/repo-demo-recorder` (or `~/.codex/skills/...`). Codex picks it up via `agents/openai.yaml`. |
-| **Claude API / custom agent** | Point the agent at the installed directory's `SKILL.md`, or call the CLI entrypoints directly — they ship with `--help` and are designed to be agent-callable. |
-| **Cursor / others** | Run the CLI scripts directly. Each script accepts JSON-friendly arguments and emits machine-readable reports (`*-report.json`, `*-media-report.json`, `*-narration-report.json`). |
-
-Inside the skill, `SKILL.md` is the canonical agent prompt. `references/` provides the deep-dive matrices the agent consults when it needs to make a non-default decision (e.g. `references/options.md`, `references/scenario-schema.md`, `references/quality-gates.md`, `references/commands.md`).
-
-## Install
-
-Clone this repository and install the skill into your agent's skill directory:
+## 安装
 
 ```bash
 git clone https://github.com/Octo-o-o-o/repo-demo-recorder.git
 cd repo-demo-recorder
 
-# Codex (default): installs to $CODEX_HOME/skills/repo-demo-recorder
-# or ~/.codex/skills/repo-demo-recorder when CODEX_HOME is unset
+# Codex，默认安装到 $CODEX_HOME/skills/repo-demo-recorder
+# 未设置 CODEX_HOME 时安装到 ~/.codex/skills/repo-demo-recorder
 node scripts/install-skill.mjs --force
 
-# Claude Code user-level skills directory
+# Claude Code
 node scripts/install-skill.mjs --target claude --force
-# → ~/.claude/skills/repo-demo-recorder
 
-# Any custom location
+# 自定义位置
 node scripts/install-skill.mjs --dest /path/to/skills/repo-demo-recorder --force
 
-# Preview without writing
+# 只预览安装动作
 node scripts/install-skill.mjs --target claude --dry-run
 ```
 
-After install, the agent (Claude Code / Codex) discovers the skill on its next launch. You can also drive the scripts directly via `node ~/.codex/skills/repo-demo-recorder/scripts/<name>.mjs --help` without any agent involvement.
+安装后重启或刷新对应 agent。也可以不安装 skill，直接用本仓库的脚本：
 
-## Requirements
+```bash
+node scripts/scaffold-repo-demo.mjs --help
+node scripts/check-skill.mjs
+```
+
+## 环境要求
 
 - Node.js 18+
-- `ffmpeg` and `ffprobe`
-- Playwright available in the target repository when running generated recorder scripts
-- Optional for local narration: macOS `say`
-- Optional for higher-quality online narration: `uvx` with `edge-tts` (no API key; requires network). Failures are retried up to 3 times per cue with backoff.
-- Optional for `generate-video-cover.mjs`: Playwright (`npm i -D playwright`). When Playwright is missing, the cover falls back to an `ffmpeg drawtext` renderer so external-recording workflows (iOS / Android / Tauri / CLI projects without Playwright) still work. Set `REPO_DEMO_RECORDER_FONT_FILE` to a `.ttf/.otf` path for nicer text rendering in the fallback.
+- `ffmpeg` 和 `ffprobe`
+- 目标 Web 项目中可用 Playwright，或者目标项目允许安装/运行 Playwright
+- 可选：macOS `say`，用于本地离线 TTS
+- 可选：`uvx` + `edge-tts`，用于质量更好的在线 TTS
+- 可选：Playwright，用于封面渲染；缺失时 `generate-video-cover.mjs` 会退化到 ffmpeg drawtext 或抽帧方案
 
-## When To Use It
-
-This skill assumes the demo can be driven by Playwright against a local web server. Use the **scaffold + recorder** workflow when the project is a Web app, SaaS UI, or any project that already exposes a browser-reachable surface.
-
-For projects that **cannot** be driven by Playwright — iOS / macOS / Android / Flutter Desktop / Tauri / Electron-without-web-shell / pure CLI — record the raw video with an external tool (Xcode Simulator + QuickTime, Android Emulator + `adb screenrecord`, Screen Studio, OBS, asciinema, …) and then plug the result into the **external recording workflow** below. Cover generation, narration, gap trimming, attached-pic embedding, quality gates, and the review HTML all work standalone on any input MP4 — only the `scaffold-repo-demo.mjs` / `scripts/recordings/*.mjs` recorder layer requires a web server.
-
-### External recording workflow
-
-1. Record a raw MP4 with whatever tool fits the platform.
-2. Hand-write a minimal `report.json` next to the video (only `captions[]`, `steps`, `consoleMessages`, `pageErrors`, `responseErrors` are required; see `references/quality-gates.md` for the schema).
-3. `add-tts-narration.mjs` adds TTS (use `--engine edge-tts --voice zh-CN-YunyangNeural` for mobile portrait demos).
-4. If the final walkthrough is made from multiple segment MP4s, `assemble-segmented-video.mjs` merges them and inserts low-intensity transition covers only between segments.
-5. `generate-video-cover.mjs --theme mobile --width 1080 --height 1920` (or desktop defaults) produces the main cover + candidate contact sheet.
-6. `embed-video-cover.mjs --intro-duration-ms 2000` embeds the main cover; `trim-video-gap.mjs` removes any blank intro tail.
-7. `validate-recording-report.mjs --require-cover-art --expect-width ... --expect-height ...` runs the media gate.
-8. `generate-review-page.mjs` writes a single HTML reviewers can open.
-
-## Recording in an isolated worktree (recommended)
-
-The skill records into the **target project** (the one being demoed). By default it does so from a dedicated git worktree, so the main checkout keeps its current branch, dirty state, and IDE session untouched:
+如果 fallback 封面文字需要更好的字体，可设置：
 
 ```bash
-# 0. From the target project root:
-node ~/.codex/skills/repo-demo-recorder/scripts/prepare-recording-worktree.mjs \
+export REPO_DEMO_RECORDER_FONT_FILE=/path/to/font.ttf
+```
+
+## 推荐工作流
+
+下面的 `<skill>` 指安装后的 skill 路径，例如 `~/.codex/skills/repo-demo-recorder` 或 `~/.claude/skills/repo-demo-recorder`。命令在被录制的目标项目根目录执行。
+
+### 1. 准备隔离 worktree
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
   --root . \
   --name customer-demo
+```
 
-# stdout last line is JSON with worktreePath; cd there and run scaffold/runner/tts/cover/validate as usual
+脚本输出最后一行是 JSON，包含 `worktreePath`。进入该目录后执行后续录制命令：
+
+```bash
 cd <worktreePath>
-
-# 1-9. scaffold / runner / TTS / cover / validate / review (all the commands below)
-
-# 10. Back from anywhere, copy artifacts back to the main checkout and remove the worktree
-node ~/.codex/skills/repo-demo-recorder/scripts/cleanup-recording-worktree.mjs \
-  --worktree <worktreePath>
 ```
 
-What `prepare-recording-worktree.mjs` does:
-
-- `git worktree add --detach <root>/.repo-demo-recorder/worktrees/<name>` (override with `--worktree-dir`).
-- Symlinks `node_modules` and non-production `.env*` files from the main checkout so the worktree boots without a fresh install. `.env.production*` is skipped by default; only link it explicitly after production recording has been authorized.
-- Optionally `--include-uncommitted` to carry staged + unstaged + untracked changes (default link paths skipped to keep symlinks intact).
-- Writes `/.repo-demo-recorder/` into `.git/info/exclude` so the worktree parent dir never shows up in the main checkout's `git status`.
-- Drops a `.repo-demo-recorder-worktree.json` metadata file inside the worktree for `cleanup-recording-worktree.mjs` to consume.
-
-What `cleanup-recording-worktree.mjs` does:
-
-- Copies `docs/recordings/` and `scripts/recordings/` (extend with `--copy <relPath>`) back to the main checkout. `--copy-mode merge|overwrite|backup` controls conflicts.
-- Unlinks the symlinks created by prepare, then `git worktree remove --force` (recording artifacts always make the worktree dirty — pass `--keep` to inspect first, then re-run to finalize).
-- Removes the `.git/info/exclude` pattern and prunes the empty `.repo-demo-recorder/` parent dirs.
-
-Skip the worktree step (and just run everything in the main checkout) when:
-
-- The target project is not a git repo (prepare fail-fasts and tells you to `git init` or skip).
-- The whole point of the recording is uncommitted local edits that are awkward to carry across a worktree.
-
-## Data source: must pick one before scaffold (`--data-mode`)
-
-Before scaffolding the skill **must** know which environment the recording targets — this decides auth, baseUrl, seed/cleanup, and on-screen safety rules. Pick one and pass it explicitly:
-
-| `--data-mode` | When to use | What scaffold does |
-| --- | --- | --- |
-| `mock` (default) | Local dev with seeded fixtures. No real PII. Safe to record and reshare. | UI writes / cleanup allowed; `auth.mode=dev-login-or-storage-state`. |
-| `staging` | Staging / pre-prod tenant + dedicated demo account. | Forces `auth.storageState`, disables cleanup (shared tenant), guide includes a Playwright login snippet. |
-| `production` | Real customer data. **Compliance-sensitive** — requires authorization. | Requires `--allow-production`. Forces `data.strategy=readonly`, `cleanup=false`, embeds a compliance warning in the guide and scenario. |
+默认会软链 `node_modules`、`.env`、`.env.local`、`.env.development*`、`.env.test*`，但不会自动软链 `.env.production*`。如果需要把主工作树的未提交改动带入录制环境，显式增加：
 
 ```bash
-# Local mock data (recommended default)
-node scripts/scaffold-repo-demo.mjs \
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name customer-demo \
+  --include-uncommitted
+```
+
+### 2. 生成场景和录制脚本
+
+必须先明确数据来源：
+
+- `mock`：本地开发环境和演示数据，推荐默认值，可分享。
+- `staging`：预发环境或测试租户，需要专用演示账号和 `auth.storageState`。
+- `production`：真实生产数据，必须有书面授权，并加 `--allow-production`；场景会被锁定为只读。
+
+桌面端示例：
+
+```bash
+node <skill>/scripts/scaffold-repo-demo.mjs \
   --root . \
   --name customer-demo \
   --data-mode mock \
-  --flows core \
-  --base-url http://127.0.0.1:3210
-
-# Staging tenant — provide auth.storageState path after scaffold
-node scripts/scaffold-repo-demo.mjs \
-  --root . \
-  --name staging-demo \
-  --data-mode staging \
-  --flows core \
-  --base-url https://staging.example.com
-
-# Production — only with written authorization and a strictly read-only flow
-node scripts/scaffold-repo-demo.mjs --root . --name prod-demo \
-  --data-mode production \
-  --allow-production \
-  --flows core \
-  --base-url https://app.example.com
-```
-
-## Demo account warm-up (`scenario.preflight.steps`)
-
-A freshly created demo account often triggers first-run onboarding modals, privacy banners or empty-state placeholders that sit on top of every dashboard page during recording.
-
-`scenario.preflight.steps` runs a short sequence in the same browser context **before** the recording starts, so cookies / localStorage / session apply, but captions / steps / video timeline are **not** affected. Supported types: `goto / click / fill / wait / fetch`.
-
-```json
-"preflight": {
-  "steps": [
-    {
-      "type": "fetch",
-      "method": "PATCH",
-      "url": "/api/user/profile",
-      "body": { "onboardingComplete": true },
-      "expectOk": true
-    },
-    { "type": "click", "selector": "[data-testid=onboarding-skip]" }
-  ]
-}
-```
-
-The scaffold emits `preflight.steps: []` and the generated `RECORDING_GUIDE.md` has a `Demo account warm-up` section with copy-pasteable templates.
-
-## Basic Usage
-
-Ask the agent (Claude Code / Codex / Cursor / Claude API) to use the skill, for example:
-
-```text
-Use repo-demo-recorder to create a customer-ready narrated demo for this project.
-```
-
-Or scaffold the recording artifacts yourself:
-
-```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/scaffold-repo-demo.mjs \
-  --root . \
-  --name customer-demo \
+  --language zh-CN \
+  --subtitles both \
   --audience customer \
   --polish customer-ready \
-  --data-mode mock \
-  --flows core,add-data \
-  --base-url http://127.0.0.1:3210 \
-  --subtitles both
+  --flows core,add-data
 ```
 
-For a pure mobile product, or the mobile part of a multi-surface product, scaffold a separate portrait recording:
+手机竖屏示例：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/scaffold-repo-demo.mjs \
+node <skill>/scripts/scaffold-repo-demo.mjs \
   --root . \
-  --name mobile-customer-demo \
+  --name mobile-demo \
   --surface mobile \
+  --data-mode mock \
+  --language zh-CN \
+  --subtitles both \
   --audience customer \
   --polish customer-ready \
-  --data-mode mock \
-  --flows mobile \
-  --base-url http://127.0.0.1:3210 \
-  --subtitles both
+  --flows mobile
 ```
 
-Then edit:
+`scaffold` 会自动检测常见 Web 项目的 dev command 和 baseUrl，包括 Vite、Next、Tauri、npm/pnpm/yarn/bun 脚本。可用 `--base-url` 覆盖。
 
-- `docs/recordings/customer-demo.scenario.json`
-- `scripts/recordings/customer-demo.mjs`
+生成后重点检查并完善：
+
+- `docs/recordings/<name>.scenario.json`
+- `scripts/recordings/<name>.mjs`
 - `docs/recordings/RECORDING_GUIDE.md`
 
-Run the generated recorder:
+### 3. 录制
 
 ```bash
 node scripts/recordings/customer-demo.mjs
 ```
 
-Add narration:
+runner 会启动 dev server、执行场景步骤、写入 MP4/WebM、最终截图和 report JSON。正式交付建议把长流程拆成多个 segment，逐段录制、逐段审片，通过后再合并。
+
+### 4. 添加 TTS 解说
+
+推荐让 TTS 脚本直接读取 scenario 中的 narration 配置：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/add-tts-narration.mjs \
+node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/customer-demo.mp4 \
+  --report docs/recordings/customer-demo-report.json \
+  --out docs/recordings/customer-demo-narrated.mp4 \
+  --scenario docs/recordings/customer-demo.scenario.json
+```
+
+如需强制指定在线中文声音：
+
+```bash
+node <skill>/scripts/add-tts-narration.mjs \
   --video docs/recordings/customer-demo.mp4 \
   --report docs/recordings/customer-demo-report.json \
   --out docs/recordings/customer-demo-narrated.mp4 \
@@ -240,64 +167,59 @@ node ~/.codex/skills/repo-demo-recorder/scripts/add-tts-narration.mjs \
   --pad-buffer-ms 300
 ```
 
-Validate narration timing and generate frame-review images:
+`edge-tts` 需要网络，并会把解说文本发送到 Microsoft 在线 TTS。涉及敏感内容且没有授权时，使用 `macos-say` 或只生成解说稿。
+
+### 5. 合并多段视频
+
+如果最终视频由多个片段组成，先确保每段都通过校验，再合并：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/validate-recording-report.mjs \
-  docs/recordings/customer-demo-report.json \
-  --video docs/recordings/customer-demo-narrated.mp4 \
-  --source-video docs/recordings/customer-demo.mp4 \
-  --narration-report docs/recordings/customer-demo-narrated-narration-report.json \
-  --require-audio \
-  --expect-width 1440 \
-  --expect-height 960 \
-  --write-media-report docs/recordings/customer-demo-media-report.json \
-  --write-frame-review docs/recordings/customer-demo-frame-review
+node <skill>/scripts/assemble-segmented-video.mjs \
+  --out docs/recordings/full-walkthrough-narrated.mp4 \
+  --segment docs/recordings/core-narrated.mp4 \
+  --segment-title "核心浏览路径" \
+  --segment-report docs/recordings/core-report.json \
+  --segment docs/recordings/add-data-narrated.mp4 \
+  --segment-title "新增数据流程" \
+  --segment-report docs/recordings/add-data-report.json \
+  --transition-duration-ms 1100 \
+  --report docs/recordings/full-walkthrough-assemble-report.json \
+  --combined-report docs/recordings/full-walkthrough-report.json
 ```
 
-Review:
+只有一个 segment 时脚本会直接复制输出，不会添加中间转场。
 
-```text
-docs/recordings/customer-demo-frame-review/contact-sheet.png
-```
+### 6. 生成并嵌入封面
 
-Generate a standard cover:
+桌面封面：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/generate-video-cover.mjs \
+node <skill>/scripts/generate-video-cover.mjs \
   --video docs/recordings/customer-demo-narrated.mp4 \
   --report docs/recordings/customer-demo-report.json \
   --out docs/recordings/customer-demo-cover.png \
-  --title "Product Demo" \
-  --subtitle "Customer-ready product walkthrough" \
+  --title "产品演示" \
+  --subtitle "面向客户的可发版走查" \
   --candidates-dir docs/recordings/customer-demo-cover-candidates
 ```
 
-Generate a mobile portrait cover:
+手机竖屏封面：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/generate-video-cover.mjs \
-  --video docs/recordings/mobile-customer-demo-narrated.mp4 \
-  --report docs/recordings/mobile-customer-demo-report.json \
-  --out docs/recordings/mobile-customer-demo-cover.png \
-  --title "Mobile Product Demo" \
-  --subtitle "Mobile product walkthrough" \
+node <skill>/scripts/generate-video-cover.mjs \
+  --video docs/recordings/mobile-demo-narrated.mp4 \
+  --report docs/recordings/mobile-demo-report.json \
+  --out docs/recordings/mobile-demo-cover.png \
   --width 1080 \
   --height 1920 \
   --theme mobile \
-  --candidates-dir docs/recordings/mobile-customer-demo-cover-candidates
+  --candidates-dir docs/recordings/mobile-demo-cover-candidates
 ```
 
-Review:
-
-```text
-docs/recordings/customer-demo-cover-candidates/contact-sheet.png
-```
-
-Embed the selected cover into the final MP4. The command supports in-place output:
+嵌入封面，并把封面写成 2 秒可见片头：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/embed-video-cover.mjs \
+node <skill>/scripts/embed-video-cover.mjs \
   --video docs/recordings/customer-demo-narrated.mp4 \
   --cover docs/recordings/customer-demo-cover.png \
   --out docs/recordings/customer-demo-narrated.mp4 \
@@ -307,12 +229,12 @@ node ~/.codex/skills/repo-demo-recorder/scripts/embed-video-cover.mjs \
   --report docs/recordings/customer-demo-cover-embed-report.json
 ```
 
-`attached_pic` is cover metadata. Many browsers and local players do not show it as the pre-play poster, so customer-ready exports should keep the `--intro-duration-ms 2000` cover slate unless you explicitly want metadata-only cover art.
+`attached_pic` 是播放器元数据，不等同于打开视频时肉眼可见的第一帧。客户可发版通常保留 `--intro-duration-ms 2000`。
 
-If the cover slate is followed by a blank/loading gap, remove that exact range and keep narration files in sync:
+如果封面后出现白屏、黑屏、loading 或无意义等待，删除那段空档：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/trim-video-gap.mjs \
+node <skill>/scripts/trim-video-gap.mjs \
   --video docs/recordings/customer-demo-narrated.mp4 \
   --cover docs/recordings/customer-demo-cover.png \
   --out docs/recordings/customer-demo-narrated.mp4 \
@@ -323,10 +245,10 @@ node ~/.codex/skills/repo-demo-recorder/scripts/trim-video-gap.mjs \
   --report docs/recordings/customer-demo-gap-trim-report.json
 ```
 
-Run the final media gate with cover-art verification:
+### 7. 质量门禁和审片页
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/validate-recording-report.mjs \
+node <skill>/scripts/validate-recording-report.mjs \
   docs/recordings/customer-demo-report.json \
   --video docs/recordings/customer-demo-narrated.mp4 \
   --source-video docs/recordings/customer-demo.mp4 \
@@ -339,119 +261,142 @@ node ~/.codex/skills/repo-demo-recorder/scripts/validate-recording-report.mjs \
   --write-frame-review docs/recordings/customer-demo-frame-review
 ```
 
-Generate a review page:
+手机端改为：
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/generate-review-page.mjs \
+--expect-width 1080 --expect-height 1920
+```
+
+生成审片页：
+
+```bash
+node <skill>/scripts/generate-review-page.mjs \
   --report docs/recordings/customer-demo-report.json \
   --video docs/recordings/customer-demo-narrated.mp4 \
   --media-report docs/recordings/customer-demo-media-report.json \
+  --narration-report docs/recordings/customer-demo-narrated-narration-report.json \
   --cover docs/recordings/customer-demo-cover.png \
   --cover-candidates docs/recordings/customer-demo-cover-candidates \
   --frame-review docs/recordings/customer-demo-frame-review \
   --out docs/recordings/customer-demo-review.html
 ```
 
-Apply a conservative customer-ready packaging preset:
+### 8. 回收 worktree
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/polish-video.mjs \
-  --video docs/recordings/customer-demo-narrated.mp4 \
-  --out docs/recordings/customer-demo-polished.mp4 \
-  --preset customer-desktop
+node <skill>/scripts/cleanup-recording-worktree.mjs \
+  --worktree <worktreePath>
 ```
 
-Prepare assets for Screen Studio when the final video needs manual zooms, cursor smoothing, device frames, or timeline polish:
+默认把 `docs/recordings/` 和 `scripts/recordings/` 拷回主工作树，然后删除录制 worktree。若使用了自定义输出目录，增加 `--copy <relPath>`。
+
+## 外部录屏接入
+
+iOS、Android、macOS 原生 App、Flutter Desktop、Tauri 桌面壳、Electron 无 Web shell、CLI 工具等无法由 Playwright 直接驱动时，使用外部录屏工作流：
+
+1. 用 QuickTime、Xcode Simulator、Android Emulator、OBS、Screen Studio 或 asciinema 录制 raw MP4。
+2. 手写最小 `report.json`，至少包含 `captions[]`、`steps[]`、`consoleMessages[]`、`pageErrors[]`、`responseErrors[]`。
+3. 用 `add-tts-narration.mjs` 添加解说。
+4. 多段视频用 `assemble-segmented-video.mjs` 合并。
+5. 用 `generate-video-cover.mjs` 生成封面和候选 contact sheet。
+6. 用 `embed-video-cover.mjs` 嵌入封面，必要时 `trim-video-gap.mjs` 删除片头空档。
+7. 用 `validate-recording-report.mjs` 和 `generate-review-page.mjs` 做最终校验和审片。
+
+最小 report 结构见 `references/quality-gates.md`。
+
+## 默认质量标准
+
+正式交付和客户可发版默认要求：
+
+- `pageErrors` 为空。
+- `responseErrors` 只包含有解释的 allowlist 噪声。
+- 所有步骤 `highlightVisible=false`。
+- 页面横向溢出为 0，除非用户明确接受横向滚动。
+- 写入型流程至少有成功 API、URL 或 DB 断言。
+- 带解说视频必须有非静音音轨，并输出 narration report、VTT 和 media report。
+- 桌面视频尺寸符合预期，常用 `1440x960`；手机视频必须竖屏，默认 `1080x1920`。
+- 客户可发版必须生成真实产品画面的封面候选、最终封面和 MP4 `attached_pic`。
+- 封面片头后不应出现明显空白/loading 段。
+- 字幕、章节横幅和段间子封面的开始/结束帧需要抽帧检查，避免遮挡、半截遮罩、字体溢出和跳动。
+- 正式交付建议生成 review HTML，减少漏审。
+
+更完整的门禁和常见失败处理见 `references/quality-gates.md`。
+
+## 命令地图
 
 ```bash
-node ~/.codex/skills/repo-demo-recorder/scripts/prepare-screen-studio-handoff.mjs \
-  --out docs/recordings/customer-demo-screen-studio-handoff \
-  --target desktop \
-  --raw-video docs/recordings/customer-demo.mp4 \
-  --narrated-video docs/recordings/customer-demo-narrated.mp4 \
-  --report docs/recordings/customer-demo-report.json \
-  --vtt docs/recordings/customer-demo-narrated-narration.vtt \
-  --cover docs/recordings/customer-demo-cover.png
-```
-
-## Demo Quality Defaults
-
-For customer-ready demos, the skill now defaults toward:
-
-- Customer-value narration instead of internal implementation language.
-- Segmented recording and per-segment review before merging.
-- Stable overlay behavior: no `translateY`, `scale`, or `clip-path` transitions for captions or chapter banners.
-- Caption timing that starts only after overlays have settled.
-- TTS freeze-frame padding so narration is not clipped.
-- Media validation plus transition frame review.
-- A standard cover using a real product frame, readable title text, candidate review, and MP4 `attached_pic` embedding.
-- A visible cover intro for customer-ready MP4s, plus optional post-intro gap trimming when local recordings start with blank/loading frames.
-- Mobile demos use a 390x844 phone viewport, 1080x1920 portrait video, bottom safe-area captions, and a 1080x1920 cover.
-- Review HTML by default for formal delivery, so each segment can be approved or rerecorded with less back-and-forth.
-- Conservative polish presets in the skill; Screen Studio handoff for subjective editor work such as motion blur, cursor smoothing, manual zoom blending, webcam layouts, and device-frame tweaks.
-
-## Command Reference
-
-```bash
-node scripts/scaffold-repo-demo.mjs --help
 node scripts/prepare-recording-worktree.mjs --help
 node scripts/cleanup-recording-worktree.mjs --help
+node scripts/scaffold-repo-demo.mjs --help
 node scripts/add-tts-narration.mjs --help
+node scripts/assemble-segmented-video.mjs --help
 node scripts/generate-video-cover.mjs --help
 node scripts/embed-video-cover.mjs --help
 node scripts/trim-video-gap.mjs --help
+node scripts/validate-recording-report.mjs --help
 node scripts/generate-review-page.mjs --help
 node scripts/polish-video.mjs --help
 node scripts/prepare-screen-studio-handoff.mjs --help
-node scripts/validate-recording-report.mjs --help
 node scripts/install-skill.mjs --help
 node scripts/check-skill.mjs --help
-node scripts/check-skill.mjs
 ```
 
-Use `--help` for script-specific options. The scripts intentionally fail fast when required inputs are missing.
+安装为 npm package 后也可以使用 `package.json` 中的 bin 名：
 
-## Repository Layout
+- `repo-demo-scaffold`
+- `repo-demo-prepare-worktree`
+- `repo-demo-cleanup-worktree`
+- `repo-demo-add-tts`
+- `repo-demo-assemble`
+- `repo-demo-cover`
+- `repo-demo-embed-cover`
+- `repo-demo-trim-gap`
+- `repo-demo-validate`
+- `repo-demo-review`
+- `repo-demo-polish`
+- `repo-demo-screen-studio`
+- `repo-demo-check`
+- `repo-demo-install-skill`
+
+## 仓库结构
 
 ```text
 repo-demo-recorder/
-  SKILL.md                        # The skill manifest (loaded by Claude Code / Codex)
-  README.md                       # Human-readable docs and quick start (this file)
-  LICENSE                         # MIT
-  package.json                    # npm metadata, CLI bin entries, `npm run check`
-  agents/openai.yaml              # Codex agent display metadata
+  SKILL.md                         # Agent 读取的主说明
+  README.md                        # 面向使用者的中文说明
+  LICENSE                          # MIT
+  package.json                     # npm 元数据、bin、npm run check
+  agents/openai.yaml               # Codex 展示元数据
   references/
-    options.md                    # Audience / polish / subtitles / cover / TTS option matrix
-    quality-gates.md              # Validation rules, common failures, report.minimal schema
-    scenario-schema.md            # scenario.json field reference + flow/step examples
-    commands.md                   # Long-form command playbook
+    commands.md                    # 完整命令手册
+    options.md                     # 观众、端类型、字幕、TTS、封面等选项矩阵
+    quality-gates.md               # 校验规则、常见失败、最小 report
+    scenario-schema.md             # scenario JSON 字段说明
   scripts/
-    scaffold-repo-demo.mjs        # Generate scenario.json + Playwright runner + RECORDING_GUIDE.md
-    prepare-recording-worktree.mjs# `git worktree add` an isolated recording environment
-    cleanup-recording-worktree.mjs# Copy artifacts back + `git worktree remove`
-    add-tts-narration.mjs         # Synthesize TTS, freeze-pad overflowing cues, mux narration
-    generate-video-cover.mjs      # 16:9 / 9:16 cover PNG + candidate contact sheet
-    embed-video-cover.mjs         # Mux cover PNG as MP4 attached_pic + optional visible intro
-    trim-video-gap.mjs            # Remove blank/loading gap and shift narration timings
-    generate-review-page.mjs      # Single-file review HTML (video + captions + cover + frames)
-    polish-video.mjs              # Conservative export presets (customer-desktop, social-mobile, …)
-    prepare-screen-studio-handoff.mjs # Bundle raw/narrated assets for Screen Studio polish
-    validate-recording-report.mjs # ffprobe + report quality gates; writes media report + frame review
-    install-skill.mjs             # Install this repo into a Codex / Claude Code skills home
-    check-skill.mjs               # Self-check: required files, syntax, end-to-end smoke tests
-    templates/
-      playwright-runner.mjs       # Source template scaffold uses to emit per-project runners
+    prepare-recording-worktree.mjs
+    cleanup-recording-worktree.mjs
+    scaffold-repo-demo.mjs
+    add-tts-narration.mjs
+    assemble-segmented-video.mjs
+    generate-video-cover.mjs
+    embed-video-cover.mjs
+    trim-video-gap.mjs
+    validate-recording-report.mjs
+    generate-review-page.mjs
+    polish-video.mjs
+    prepare-screen-studio-handoff.mjs
+    install-skill.mjs
+    check-skill.mjs
+    templates/playwright-runner.mjs
 ```
 
-## Development
-
-Run the skill self-check:
+## 开发和自检
 
 ```bash
 npm run check
 ```
 
-This validates required files, script syntax, and a scaffold smoke test.
+自检会验证关键文件、脚本语法、脚手架 smoke test，以及主要 CLI 的基础行为。提交前建议至少跑一次。
 
 ## License
 
