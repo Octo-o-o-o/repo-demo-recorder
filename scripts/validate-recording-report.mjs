@@ -23,6 +23,7 @@ Options:
   --write-media-report <path>       Write JSON media validation summary
   --write-frame-review <dir>        Extract cue transition frames and contact sheet
   --frame-review-offsets-ms <list>  Comma-separated offsets, default -220,-80,80,220
+  --frame-review-time-scale <n>     Divide cue times by this factor before extracting frames
 `)
     process.exit(0)
   }
@@ -47,7 +48,8 @@ Options:
     writeMediaReport: null,
     writeFrameReview: null,
     frameReviewMaxFrames: 80,
-    frameReviewOffsetsMs: [-220, -80, 80, 220]
+    frameReviewOffsetsMs: [-220, -80, 80, 220],
+    frameReviewTimeScale: 1
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -116,6 +118,8 @@ Options:
         .split(",")
         .map((item) => Number(item.trim()))
         .filter((item) => Number.isFinite(item))
+    } else if (key === "frame-review-time-scale") {
+      args.frameReviewTimeScale = Number(value)
     } else {
       throw new Error(`无法识别参数：${token}`)
     }
@@ -144,6 +148,9 @@ Options:
   }
   if (!args.frameReviewOffsetsMs.length) {
     throw new Error("--frame-review-offsets-ms 至少需要一个毫秒偏移")
+  }
+  if (!Number.isFinite(args.frameReviewTimeScale) || args.frameReviewTimeScale <= 0) {
+    throw new Error("--frame-review-time-scale 必须是正数字")
   }
 
   return args
@@ -248,9 +255,37 @@ async function prepareFrameReviewDir(outputDir) {
   }
 }
 
+function loadFrameReviewCues(report, args) {
+  if (args.narrationReport) {
+    try {
+      const narrationReport = JSON.parse(readFileSync(path.resolve(args.narrationReport), "utf8"))
+      if (Array.isArray(narrationReport.cues) && narrationReport.cues.length > 0) {
+        return {
+          source: "narration-report",
+          cues: narrationReport.cues.map((cue) => ({
+            kind: cue.kind || "caption",
+            title: cue.title || "",
+            body: cue.body || cue.text || "",
+            startMs: cue.startMs,
+            endMs: cue.endMs,
+            durationMs: cue.durationMs
+          }))
+        }
+      }
+    } catch {
+      // collectFailures reports narration-report parse errors separately.
+    }
+  }
+  return {
+    source: "report.captions",
+    cues: Array.isArray(report.captions) ? report.captions : []
+  }
+}
+
 async function writeFrameReview(report, args) {
   if (!args.writeFrameReview) return null
-  const videoPath = args.sourceVideo || args.video
+  const { source: cueSource, cues } = loadFrameReviewCues(report, args)
+  const videoPath = cueSource === "narration-report" ? args.video || args.sourceVideo : args.sourceVideo || args.video
   if (!videoPath) {
     throw new Error("--write-frame-review 需要同时提供 --source-video 或 --video")
   }
@@ -259,9 +294,8 @@ async function writeFrameReview(report, args) {
   await prepareFrameReviewDir(outputDir)
   await mkdir(outputDir, { recursive: true })
 
-  const captions = Array.isArray(report.captions) ? report.captions : []
   const samples = []
-  for (const [cueIndex, cue] of captions.entries()) {
+  for (const [cueIndex, cue] of cues.entries()) {
     const title = sanitizeFilePart(cue.title || cue.kind || `cue-${cueIndex + 1}`)
     const boundaries = [
       { label: "start", value: Number(cue.startMs ?? cue.atMs ?? 0) },
@@ -270,7 +304,7 @@ async function writeFrameReview(report, args) {
 
     for (const boundary of boundaries) {
       for (const offset of args.frameReviewOffsetsMs) {
-        const ms = Math.max(0, Math.round(boundary.value + offset))
+        const ms = Math.max(0, Math.round(boundary.value / args.frameReviewTimeScale + offset))
         const offsetLabel = offset < 0 ? `minus${Math.abs(offset)}` : `plus${offset}`
         samples.push({
           cueIndex: cueIndex + 1,
@@ -323,6 +357,8 @@ async function writeFrameReview(report, args) {
     video: path.resolve(videoPath),
     outputDir,
     contactSheet,
+    cueSource,
+    timeScale: args.frameReviewTimeScale,
     sampleCount: selectedSamples.length,
     totalCandidateFrames: samples.length,
     offsetsMs: args.frameReviewOffsetsMs,

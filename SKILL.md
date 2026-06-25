@@ -15,6 +15,7 @@ description: Create verified repository-native product walkthrough recordings wi
 2. 可复现：脚本和 scenario 能让后续 agent 或开发者重跑。
 3. 可审片：产物包含 report、media report、frame review 或 review HTML。
 4. 可交付：字幕、解说、封面、尺寸、音量和过渡帧达到目标观众标准。
+5. 可观看：客户版开头稳定、先展示产品价值，再讲登录、部署、配置和实现细节。
 
 ## 先确认两件事
 
@@ -71,6 +72,21 @@ iOS、Android、macOS 原生 App、Flutter Desktop、Tauri 桌面壳、Electron 
 - `references/options.md`
 - `references/scenario-schema.md`
 - `references/quality-gates.md`
+
+如果仓库已经有旧录屏、脚本、封面或中间产物，先用 `find docs/recordings scripts/recordings` 和 `git status` 定位最新版本，不要因为切分支、worktree cleanup 或 ignored 文件看不到就直接重录。找不到最终视频时，优先保留并复用仍存在的 scenario、manifest、report、cover frame、subtitle report 和分段素材。
+
+### 0.5. 先定客户可观看叙事
+
+客户可发版默认采用“能力优先”的顺序：
+
+1. 开场 5-10 秒先给稳定的产品画面和一句话定位。
+2. 先展示核心工作流、关键能力和业务结果，让观众知道产品能做什么。
+3. 中段展示可控机制：确认、审计、来源、权限、回滚、导出。
+4. 后段再讲登录、云端、本地部署、移动端配对、模型配置、license、审计后台等落地条件。
+
+不要把登录页、配置页、云端说明、mock 说明或内部实现放在客户视频最前面，除非视频主题就是部署教程。第一段之前也应有一个短分镜说明，说明接下来这一段要演示什么，避免封面后马上进入一连串无上下文操作。
+
+开场稳定性是客户版硬要求：封面或片头之后，不要让观众看到多个页面反复跳转、刷新、loading 或路由准备过程。用 preflight、seed、storage state、打开目标页后再开始录制、或单独插入 opening slate，把启动和准备动作移出正式画面。
 
 ### 1. 建隔离 worktree
 
@@ -192,6 +208,8 @@ node <skill>/scripts/add-tts-narration.mjs \
 
 TTS 默认 `--pad-mode freeze`：语音比展示窗口长时，在对应 cue 末尾插入冻结帧并平移后续时间轴。不要截断音频。单段 padding 超过上限时，优先缩短文案。
 
+客户可发版还要检查音量。`validate-recording-report.mjs` 默认只判断非静音；公开视频或客户演示建议把最终 `ffmpeg volumedetect` 的 `max_volume` 控制在约 `-12dB` 到 `-3dB`，明显低于 `-18dB` 时应在后期做增益或重新合成。不要靠播放器手动拉高音量来掩盖源文件音量偏小。
+
 ### 7. 合并多段视频
 
 多段视频用：
@@ -283,6 +301,13 @@ node <skill>/scripts/validate-recording-report.mjs \
 - 客户可发版有封面、候选封面、封面嵌入验证。
 - 字幕、章节横幅、段间子封面的开始和结束帧没有半截遮罩、遮挡关键控件、字体溢出或跳动。
 
+客户可发版额外检查：
+
+- 片头 0.5s、第一段进入前说明、至少 1-3 个段间转场、最后 30s 和整片 contact sheet。
+- 黑屏/白屏/loading：用 `ffmpeg blackdetect` 和人工抽帧确认没有连续空白、报错或卡住画面。
+- 如果 TTS freeze padding、加速或剪辑改变了时间轴，frame review 必须使用最终视频和调整后的 narration report；后期加速过的素材传 `--frame-review-time-scale <speed>`，否则抽帧会落到错误画面。
+- 若烧录开放字幕，必须抽片头和封面后首帧，确认字幕没有压住功能标签、产品名、核心文案或 CTA。
+
 ### 10. 生成审片页
 
 正式交付默认生成：
@@ -341,6 +366,7 @@ node <skill>/scripts/cleanup-recording-worktree.mjs --worktree <worktreePath>
 ## 叙事和可见文案规则
 
 - 客户演示：讲业务价值、可控性、效率、追溯、权限、安全和下一步。不要在字幕或旁白里出现 mock、fixture、内部边界、临时脚本、dev warning。
+- 客户演示先讲“能做什么”，再讲“怎么登录、怎么部署、怎么配置”。除非用户明确要部署教程，否则登录和配置不要放在前 10 秒。
 - 内部评审：可以讲实现边界、已知噪声和风险，但这些信息放 report/guide，不放客户版视频。
 - QA/PR 证明：聚焦变更前后、断言和回归结果。
 - 培训 SOP：放慢节奏，讲字段含义和操作顺序。
@@ -363,6 +389,8 @@ node <skill>/scripts/cleanup-recording-worktree.mjs --worktree <worktreePath>
 - 桌面默认 1280x720，手机默认 1080x1920。
 - 候选帧优先 Home、Dashboard、核心结果页；避开登录页、设置页、loading、错误页和信息过密页面。
 - 客户封面标题小尺寸也要可读，不能遮挡产品主视觉。
+- 产品截图要完整可辨认。默认用 contain/pad 或 clean frame，不用会裁切截图的 `object-fit: cover`；不要叠加假窗口条、厚玻璃外框、设备边框或红线标注去遮住原始 UI 内容。装饰性外框只能在截图外侧，不得压住截图边缘、顶部工具栏、侧栏、底部导航或正文。
+- 段间转场里的迷你产品预览也遵守同一规则：可缩小、可弱化，但不能裁切或遮挡原始画面。
 - 记录最终封面选择理由，便于复验和重录。
 
 ## 可用脚本速查

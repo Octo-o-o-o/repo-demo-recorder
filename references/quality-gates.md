@@ -14,6 +14,7 @@
   - 当 `--pad-mode freeze`（默认）启用时，输出时长 = 源时长 + 各超时 cue 的 padding 之和，可能 > 100%；要校验 `outputDurationMs` 与 narration-report 里的 `expectedDurationMs` 偏差 ≤ 2% 或 ≤ 500ms（脚本内部已 fail-fast）。
   - 当 `--pad-mode none`，输出时长应等于源时长，且不应短于 98%。
 - 带解说视频必须通过非静音校验：`ffmpeg volumedetect` 的 `max_volume` 默认高于 `-50 dB`。
+- 客户可发版建议额外提高音量门槛：`max_volume` 通常应在约 `-12 dB` 到 `-3 dB`；低于 `-18 dB` 时按“声音偏小”处理，重合成或用后期增益修正。
 - 视频尺寸、帧率、codec 必须写入 media report；正式桌面录屏默认校验 `1440x960` 或项目约定 viewport。
 - 手机端或多端中的手机版必须输出竖屏视频，默认校验 `1080x1920`，且 `height > width`。
 - 解说稿必须随产物落地，不能只有合成后的音轨。
@@ -23,8 +24,11 @@
 - 封面开场结束后不能出现超过约 0.5-1.0 秒的纯白、纯黑、loading 或空白等待；抽取封面结束后 0.1s、1s、2s 关键帧确认。如果存在空白，用 `trim-video-gap.mjs` 删除该范围并同步 narration VTT/report。
 - 正式交付建议生成 review HTML，把最终视频、字幕时间线、封面候选、frame review、media report 放在同一页；逐段录制时每段都应有对应审片入口。
 - 至少抽 1-3 张关键帧做人眼检查，确认字幕没有遮挡主要控件、表单输入、报告正文或导出结果。
+- 客户可发版至少抽查片头 0.5s、第一段前说明、1-3 个段间转场、关键结果页、最后 30s，并生成整片 contact sheet；不能只依赖 report 通过。
 - 手机端关键帧必须额外检查字幕没有遮挡底部导航、输入框、键盘触发区域和主 CTA；封面不能遮住底部导航或关键按钮。
 - 正式交付或客户可发版必须围绕 caption/chapter 的 `startMs/endMs` 抽取过渡帧，确认没有半截遮罩、位移露出、遮挡关键控件、字体溢出或横幅跳动。
+- 如果 TTS freeze padding、变速、trim 或外部剪辑改变了时间轴，抽帧必须使用最终视频对应的时间轴。优先传 `--narration-report`；如果最终视频被加速，额外传 `--frame-review-time-scale <speed>`，避免抽帧落到错误画面。
+- 使用 `ffmpeg blackdetect` 或等价手段检查最终视频，确认没有连续黑屏；人工 contact sheet 同时检查白屏、loading、错误页和卡住画面。
 - 录屏结束后停止本地 dev server，不保留端口监听。
 
 ## 可接受噪声
@@ -64,6 +68,17 @@
 
 手机端优先使用底部安全区全宽字幕，但需要避开底部导航、输入框、键盘、toast 和主 CTA；如果页面本身底部操作密集，把字幕上移到稳定空白区或改用更短字幕。
 
+片头和章节转场也要按同样规则检查。开放字幕很容易压住封面标签、功能 chips、产品名或分镜说明；修复优先级是缩短字幕文案、移动片头元素、调整字幕安全区，而不是让画面元素互相压住。
+
+### 开头页面反复跳转
+
+客户版开头如果封面后连续出现多个页面跳转、刷新、loading 或准备过程，会显得不专业。修复方式：
+
+1. 用 preflight 完成登录、关闭弹窗、进入目标路由和数据预热。
+2. 录制开始时保持在一个稳定页面，至少停留几秒让观众建立上下文。
+3. 第一段前加入短 opening slate 或章节说明，告诉观众接下来要看什么。
+4. 把云端登录、部署模式、模型配置等说明放到后段，先展示核心能力和业务结果。
+
 ### 遮罩只显示一半或出现/收起不丝滑
 
 根因通常是 DOM overlay 用了 `translateY/translateX/scale/clip-path` 做出现/收起动画，录屏采到了动画中间帧。正式交付应改为：
@@ -96,6 +111,48 @@
 6. 记录最终选择理由，便于后续重录复用。
 7. 运行 `embed-video-cover.mjs` 把最终封面嵌入 MP4；客户可发版默认加 `--intro-duration-ms 2000`，并抽取 `00:00:00.5` 首帧确认封面肉眼可见。
 8. 抽取封面结束后的帧，例如 `2.1s`、`3s`、`4s`。如果这些帧是空白/loading，先找到第一个有效产品画面，再用 `trim-video-gap.mjs --remove-start-ms 2000 --remove-end-ms <有效画面时间>` 删除空白。
+
+### 封面或转场外框遮挡产品 UI
+
+常见根因：
+
+- 截图使用 `object-fit: cover`，为了填满容器裁掉了侧栏、顶部工具栏或底部导航。
+- 叠加了假浏览器窗口条、设备边框、厚玻璃外框、描边或高光，压在原始截图上方。
+- 截图被放在固定比例容器里但没有留安全内边距。
+
+修复原则：
+
+1. 产品截图默认用 `object-fit: contain` 或 ffmpeg `force_original_aspect_ratio=decrease,pad=...`，优先保留完整 UI。
+2. 外框只能作为截图外侧的阴影、背景或轻量边线，不压住截图内容。
+3. 不在截图上画红框、粗边框或高亮线作为最终封面/转场装饰；需要标注时放到独立说明层。
+4. 主封面、片头、段间转场都抽帧确认：产品名、侧栏、顶部工具栏、底部导航、正文和主要 CTA 没被遮挡。
+5. 如果完整截图变小，也优先接受略小但完整的截图；客户要看产品时，完整性比装饰性外框更重要。
+
+### 声音太小
+
+`--require-audio` 只能证明有音轨，不代表适合客户播放。客户可发版用：
+
+```bash
+ffmpeg -hide_banner -i docs/recordings/demo-final.mp4 -vn -af volumedetect -f null - 2>&1 | rg "mean_volume|max_volume"
+```
+
+经验阈值：
+
+- `max_volume` 高于 `-12 dB` 通常可接受。
+- `max_volume` 在 `-18 dB` 以下通常偏小。
+- 接近 `0 dB` 可能削波，建议留到约 `-3 dB`。
+
+如果偏小，可重跑 TTS 引擎音量参数，或用 ffmpeg `volume=XdB` 做增益后重新烧录字幕、嵌入封面并复验。
+
+### 转场抽帧时间不准
+
+当 TTS 使用 freeze padding、最终视频做了 `setpts/atempo` 变速，或后期 trim 改变时间轴时，原始 report 里的 `captions[].startMs/endMs` 不再等于最终视频时间。表现是你明明想抽转场帧，却抽到了前一个业务页。
+
+修复方式：
+
+1. 优先使用最终 narration report 的 `cues[].startMs/endMs`。
+2. 如果后期做了 1.035x 之类变速，给 validate 传 `--frame-review-time-scale 1.035`。
+3. 如果仍不确定，用小范围 contact sheet 定位，例如截取 40-60 秒每秒一帧，再单独抽转场中心帧。
 
 ### 审片成本太高
 

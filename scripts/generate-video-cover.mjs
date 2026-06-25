@@ -243,10 +243,10 @@ h1{margin:${Math.round(height * 0.105)}px 0 0;font-size:${headlineSize}px;line-h
 h2{margin:${Math.round(height * 0.039)}px 0 0;font-size:${subtitleSize}px;line-height:1.25;letter-spacing:0;font-weight:700;color:rgba(248,250,247,.96)}
 .line{margin-top:${Math.round(height * 0.039)}px;font-size:${Math.round(width * 0.018)}px;line-height:1.45;color:rgba(230,239,232,.84)}
 .accent{margin-top:${Math.round(height * 0.058)}px;width:72%;height:5px;border-radius:999px;background:linear-gradient(90deg,#60b57a,#c4d9bf)}
-.screenWrap{position:absolute;right:4.4%;top:14.4%;width:56%;height:71.1%;border-radius:18px;box-shadow:0 36px 96px rgba(0,0,0,.42);background:rgba(255,255,255,.08);padding:10px}
-.screenBar{height:22px;border-radius:12px 12px 0 0;background:rgba(242,245,239,.88);display:flex;align-items:center;gap:7px;padding-left:13px}
+.screenWrap{position:absolute;right:4.4%;top:14.4%;width:56%;height:71.1%;border-radius:18px;box-shadow:0 36px 96px rgba(0,0,0,.42);background:rgba(255,255,255,.08);padding:0;display:flex;align-items:center;justify-content:center}
+.screenBar{display:none}
 .dot{width:8px;height:8px;border-radius:50%;background:#315f44;opacity:.55}
-.screen{width:100%;height:calc(100% - 22px);object-fit:cover;object-position:center;display:block;border-radius:0 0 12px 12px;border:1px solid rgba(255,255,255,.68);border-top:0}
+.screen{width:100%;height:100%;object-fit:contain;object-position:center;display:block;border-radius:14px;border:1px solid rgba(255,255,255,.68);background:rgba(246,248,244,.72)}
 .footer{position:absolute;left:6%;bottom:8.8%;color:rgba(236,245,238,.64);font-size:${Math.round(width * 0.014)}px}
 </style></head><body><div class="cover">
 <div class="bg"></div><div class="shade"></div><div class="border"></div>
@@ -279,7 +279,7 @@ h2{margin:34px 0 0;font-size:42px;line-height:1.24;letter-spacing:0;font-weight:
 .phoneWrap{position:absolute;left:230px;right:230px;top:690px;height:1040px;border-radius:54px;box-shadow:0 44px 118px rgba(0,0,0,.46);background:rgba(255,255,255,.10);padding:18px}
 .phoneTop{height:38px;border-radius:34px 34px 0 0;background:rgba(242,245,239,.90);display:flex;align-items:center;justify-content:center}
 .speaker{width:118px;height:9px;border-radius:999px;background:rgba(49,95,68,.35)}
-.screen{width:100%;height:calc(100% - 38px);object-fit:cover;object-position:center top;display:block;border-radius:0 0 34px 34px;border:1px solid rgba(255,255,255,.70);border-top:0;background:#f8f8f3}
+.screen{width:100%;height:calc(100% - 38px);object-fit:contain;object-position:center;display:block;border-radius:0 0 34px 34px;border:1px solid rgba(255,255,255,.70);border-top:0;background:#f8f8f3}
 .footer{position:absolute;left:72px;right:72px;bottom:86px;color:rgba(236,245,238,.72);font-size:25px;line-height:1.4}
 </style></head><body><div class="cover">
 <div class="bg"></div><div class="shade"></div><div class="border"></div>
@@ -329,11 +329,10 @@ function ffmpegHasDrawtext() {
 // 纯抽帧 fallback：当系统 ffmpeg 不支持 drawtext 时，至少把抽帧导出为封面，
 // 让后续 embed-video-cover 仍然有 PNG 可嵌。文字层留给用户在外部工具里加，或安装 playwright 后重跑。
 async function renderCoverFrameOnly(framePath, outPath, args) {
-  const portrait = Number(args.height) > Number(args.width)
   const width = Number(args.width)
   const height = Number(args.height)
-  // 保留长宽比，居中裁剪到目标尺寸；不渲染任何文字层。
-  const filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=${portrait ? "increase" : "decrease"},crop=${width}:${height},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x101612[out]`
+  // 保留长宽比，完整居中到目标尺寸；不渲染任何文字层。
+  const filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x101612[out]`
   await run("ffmpeg", [
     "-y",
     "-loop",
@@ -450,7 +449,7 @@ async function makeContactSheet(page, images, outPath, args) {
     body{margin:0;background:#f6f7f4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     .sheet{display:grid;grid-template-columns:repeat(${columns},${tileWidth}px);gap:12px;padding:12px;width:${columns * tileWidth + (columns - 1) * 12 + 24}px}
     figure{margin:0;background:white;border:1px solid rgba(30,40,34,.18);border-radius:8px;overflow:hidden;box-shadow:0 10px 28px rgba(30,40,34,.10)}
-    img{display:block;width:${tileWidth}px;height:${tileHeight}px;object-fit:cover}
+    img{display:block;width:${tileWidth}px;height:${tileHeight}px;object-fit:contain;background:#f6f7f4}
     figcaption{padding:7px 10px 9px;font-size:13px;color:#33423a}
   </style></head><body><div class="sheet">${tiles.join("")}</div></body></html>`
   await page.setViewportSize({

@@ -189,6 +189,7 @@ node <skill>/scripts/validate-recording-report.mjs \
   --narration-report docs/recordings/add-data-flow-narrated-narration-report.json \
   --require-audio \
   --require-cover-art \
+  --min-audio-max-db -18 \
   --expect-width 1440 \
   --expect-height 960 \
   --write-media-report docs/recordings/add-data-flow-media-report.json \
@@ -206,6 +207,51 @@ node <skill>/scripts/generate-review-page.mjs \
   --cover-candidates docs/recordings/add-data-flow-cover-candidates \
   --frame-review docs/recordings/add-data-flow-frame-review \
   --out docs/recordings/add-data-flow-review.html
+```
+
+如果 TTS freeze padding、trim 或后期变速改变了时间轴，frame review 要用最终时间轴。最终视频做过 1.035x 加速时示例：
+
+```bash
+node <skill>/scripts/validate-recording-report.mjs \
+  docs/recordings/full-walkthrough-report.json \
+  --video docs/recordings/full-walkthrough-final.mp4 \
+  --source-video docs/recordings/full-walkthrough-source.mp4 \
+  --narration-report docs/recordings/full-walkthrough-narration-report.json \
+  --require-audio \
+  --require-cover-art \
+  --min-audio-max-db -18 \
+  --expect-width 1440 \
+  --expect-height 960 \
+  --write-media-report docs/recordings/full-walkthrough-media-report.json \
+  --write-frame-review docs/recordings/full-walkthrough-frame-review \
+  --frame-review-time-scale 1.035
+```
+
+客户可发版建议额外做整片 contact sheet 和黑屏检测：
+
+```bash
+mkdir -p docs/recordings/full-walkthrough-qa
+
+ffmpeg -y -i docs/recordings/full-walkthrough-final.mp4 \
+  -map 0:v:0 \
+  -vf "fps=1/60,scale=288:-1,tile=4x4:padding=8:margin=8:color=white" \
+  -frames:v 1 -update 1 \
+  docs/recordings/full-walkthrough-qa/contact-sheet.png
+
+ffmpeg -hide_banner -nostats \
+  -i docs/recordings/full-walkthrough-final.mp4 \
+  -vf blackdetect=d=1:pix_th=0.02 \
+  -an -f null - 2>&1 | tee docs/recordings/full-walkthrough-qa/blackdetect.log
+```
+
+抽查片头、转场和尾段：
+
+```bash
+ffmpeg -y -ss 00:00:00.500 -i docs/recordings/full-walkthrough-final.mp4 \
+  -map 0:v:0 -frames:v 1 -update 1 docs/recordings/full-walkthrough-qa/opening.png
+
+ffmpeg -y -ss 00:00:59.200 -i docs/recordings/full-walkthrough-final.mp4 \
+  -map 0:v:0 -frames:v 1 -update 1 docs/recordings/full-walkthrough-qa/transition.png
 ```
 
 ## 8. 包装 / Screen Studio 交接
