@@ -198,13 +198,15 @@ node <skill>/scripts/add-tts-narration.mjs \
   --scenario docs/recordings/<flow>.scenario.json
 ```
 
-客户可发版中文可用：
+`scaffold-repo-demo.mjs` 可用 `--tts-provider` 选择合成提供商：
 
 ```bash
---engine edge-tts --voice zh-CN-YunyangNeural --pad-mode freeze --pad-buffer-ms 300
+--tts-provider auto | macos-say | local-system | edge-tts | doubao-tts-v3
 ```
 
-`edge-tts` 是在线 TTS，会把文本发送到 Microsoft。敏感内容没有授权时不要用，改用 macOS `say`、本地语音或只输出文稿。
+默认 `auto` 规则：客户可发版用 `edge-tts`（中文 `zh-CN-YunyangNeural`，英文 `en-US-GuyNeural`）；内部评审、QA、培训默认用 macOS 本机语音。需要豆包女声时用 `--tts-provider doubao-tts-v3`，scenario 会写入 `engine=doubao-tts-v3`、`voice=zh_female_jitangmei_uranus_bigtts`、`doubaoModel=seed-tts-2.0-expressive`、`doubaoResourceId=seed-tts-2.0` 等非敏感配置。
+
+不要把 TTS API key 写进 scenario、guide、runner 或 skill 文档。`doubao-tts-v3` 运行时只从 `DOUBAO_TTS_API_KEY` / `VOLCENGINE_TTS_API_KEY`（或临时 CLI `--doubao-api-key`）读取 key。`edge-tts` 和 `doubao-tts-v3` 都是在线 TTS，会把解说文本发送到对应服务；敏感内容没有授权时改用 macOS `say`、本地语音或只输出文稿。
 
 TTS 默认 `--pad-mode freeze`：语音比展示窗口长时，在对应 cue 末尾插入冻结帧并平移后续时间轴。不要截断音频。单段 padding 超过上限时，优先缩短文案。
 
@@ -227,7 +229,7 @@ node <skill>/scripts/assemble-segmented-video.mjs \
   --combined-report docs/recordings/<full>-report.json
 ```
 
-2 段及以上会在段间插入短子封面。子封面应沿用主封面的真实抽帧、色彩和字体，但视觉层级更低。
+2 段及以上会在段间插入低强度子封面。客户可发版默认让每张子封面停留约 2.0-2.5 秒，并配短淡入和更柔和的淡出；中文标题较长、需要观众理解章节目标时可以继续加长。不要让转场在 1 秒左右一闪而过。子封面应沿用主封面的真实抽帧、色彩和字体，但视觉层级更低。
 
 ### 8. 生成封面并嵌入 MP4
 

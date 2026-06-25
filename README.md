@@ -54,6 +54,7 @@ node scripts/check-skill.mjs
 - 目标 Web 项目中可用 Playwright，或者目标项目允许安装/运行 Playwright
 - 可选：macOS `say`，用于本地离线 TTS
 - 可选：`uvx` + `edge-tts`，用于质量更好的在线 TTS
+- 可选：火山/豆包 TTS v3 key（运行时放 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY`），用于豆包在线语音合成
 - 可选：Playwright，用于封面渲染；缺失时 `generate-video-cover.mjs` 会退化到 ffmpeg drawtext 或抽帧方案
 
 如果 fallback 封面文字需要更好的字体，可设置：
@@ -161,13 +162,24 @@ node <skill>/scripts/add-tts-narration.mjs \
   --video docs/recordings/customer-demo.mp4 \
   --report docs/recordings/customer-demo-report.json \
   --out docs/recordings/customer-demo-narrated.mp4 \
-  --engine edge-tts \
-  --voice zh-CN-YunyangNeural \
-  --pad-mode freeze \
-  --pad-buffer-ms 300
+    --engine edge-tts \
+    --voice zh-CN-YunyangNeural \
+    --pad-mode freeze \
+    --pad-buffer-ms 300
 ```
 
-`edge-tts` 需要网络，并会把解说文本发送到 Microsoft 在线 TTS。涉及敏感内容且没有授权时，使用 `macos-say` 或只生成解说稿。
+如需使用豆包女声，先把 key 放到环境变量，再指定 engine：
+
+```bash
+DOUBAO_TTS_API_KEY=... node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/customer-demo.mp4 \
+  --report docs/recordings/customer-demo-report.json \
+  --out docs/recordings/customer-demo-narrated.mp4 \
+  --engine doubao-tts-v3 \
+  --voice zh_female_jitangmei_uranus_bigtts
+```
+
+脚手架也可以直接选择 provider：`--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3`。`edge-tts` 与 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务；涉及敏感内容且没有授权时，使用 `macos-say` 或只生成解说稿。不要把 API key 写进 scenario 或文档。
 
 ### 5. 合并多段视频
 
@@ -182,7 +194,9 @@ node <skill>/scripts/assemble-segmented-video.mjs \
   --segment docs/recordings/add-data-narrated.mp4 \
   --segment-title "新增数据流程" \
   --segment-report docs/recordings/add-data-report.json \
-  --transition-duration-ms 1100 \
+  --transition-duration-ms 2400 \
+  --transition-fade-in-ms 180 \
+  --transition-fade-out-ms 380 \
   --report docs/recordings/full-walkthrough-assemble-report.json \
   --combined-report docs/recordings/full-walkthrough-report.json
 ```

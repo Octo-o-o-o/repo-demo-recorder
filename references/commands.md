@@ -96,14 +96,34 @@ node <skill>/scripts/add-tts-narration.mjs \
   --video docs/recordings/add-data-flow.mp4 \
   --report docs/recordings/add-data-flow-report.json \
   --out docs/recordings/add-data-flow-narrated.mp4 \
-  --language zh-CN \
-  --engine edge-tts \
-  --voice zh-CN-YunyangNeural \
-  --pad-mode freeze \
-  --pad-buffer-ms 300
+  --scenario docs/recordings/add-data-flow.scenario.json
 ```
 
-`--engine edge-tts` 需要 `uvx` 和网络（会把文本发到 Microsoft Edge online TTS）。离线时改 `--engine macos-say`，voice 不存在会自动 fallback。
+推荐让 `--scenario` 读取 `scenario.narration.provider` / `engine` / `voice`。生成 scenario 时可用 `--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3` 选择合成提供商；CLI 显式 `--engine` / `--voice` 只用于临时覆盖。
+
+Edge 在线中文示例：
+
+```bash
+node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/add-data-flow.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --engine edge-tts \
+  --voice zh-CN-YunyangNeural
+```
+
+豆包/火山 TTS v3 示例（key 只放环境变量）：
+
+```bash
+DOUBAO_TTS_API_KEY=... node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/add-data-flow.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --engine doubao-tts-v3 \
+  --voice zh_female_jitangmei_uranus_bigtts
+```
+
+`edge-tts` 和 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务。离线或文本敏感时改 `--engine macos-say`，voice 不存在会自动 fallback。
 
 ## 4. 多段合并与段间子封面
 
@@ -118,12 +138,14 @@ node <skill>/scripts/assemble-segmented-video.mjs \
   --segment docs/recordings/add-data-narrated.mp4 \
   --segment-title "新增数据流程" \
   --segment-report docs/recordings/add-data-report.json \
-  --transition-duration-ms 1100 \
+  --transition-duration-ms 2400 \
+  --transition-fade-in-ms 180 \
+  --transition-fade-out-ms 380 \
   --report docs/recordings/full-walkthrough-assemble-report.json \
   --combined-report docs/recordings/full-walkthrough-report.json
 ```
 
-子封面会使用下一段视频的真实抽帧作为背景，并沿用主封面的色彩/字体，但只显示「接下来」、下一段标题和一句短提示，视觉层级低于片头主封面。合并后的 `full-walkthrough-report.json` 会把原分段 report 的时间轴整体平移，并把子封面写成 `kind: "transition"`、`narration: false` 的 cue，便于 frame review 抽帧检查。
+子封面会使用下一段视频的真实抽帧作为背景，并沿用主封面的色彩/字体，但只显示「接下来」、下一段标题和一句短提示，视觉层级低于片头主封面。客户可发版默认停留约 2.4 秒，并使用短淡入与柔和淡出；中文标题或章节说明较长时可以继续加长。合并后的 `full-walkthrough-report.json` 会把原分段 report 的时间轴整体平移，并把子封面写成 `kind: "transition"`、`narration: false` 的 cue，便于 frame review 抽帧检查。
 
 ## 5. 生成封面（含候选 contact sheet）
 

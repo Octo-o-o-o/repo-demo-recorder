@@ -82,9 +82,10 @@
 ## TTS 解说
 
 - `none`：不加解说，只保留字幕/画面。
+- `auto`：脚手架默认。客户可发版解析为 `edge-tts`，内部评审/QA/培训解析为 macOS 本机语音。
 - `local-system`：使用本机系统 TTS。macOS 默认可用 `say`，中文推荐先试 `Tingting` 或 `Flo (Chinese (China mainland))`。
 - `edge-tts`：通过 `uvx edge-tts` 使用 Microsoft Edge online TTS，中文默认推荐 `zh-CN-YunyangNeural`。需要联网，并会把解说文本发送到在线 TTS 服务。
-- `cloud`：调用云端 TTS。只有用户明确允许外部服务和凭据可用时使用。
+- `doubao-tts-v3`：通过火山/豆包双向流式 TTS 合成，默认女声 `zh_female_jitangmei_uranus_bigtts`、`doubaoModel=seed-tts-2.0-expressive`、`doubaoResourceId=seed-tts-2.0`。需要联网，并通过 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY` 提供 key；不要把 key 写进 scenario。
 - `script-only`：只生成解说稿、VTT/JSON，不合成音频。
 
 解说语言默认跟字幕语言一致。中文建议语速 170-190 wpm；英文建议 155-175 wpm。正式演示应输出 transcript，方便人工校对。
@@ -185,7 +186,7 @@
   "subtitles": "open",
   "audience": "qa-proof",
   "polish": "formal-delivery",
-  "narration": { "enabled": true, "engine": "macos-say", "voice": "Tingting", "rate": 180, "padMode": "freeze", "padBufferMs": 300 },
+  "narration": { "enabled": true, "provider": "auto", "engine": "macos-say", "voice": "Tingting", "rate": 180, "padMode": "freeze", "padBufferMs": 300 },
   "language": "zh-CN",
   "flows": ["core"],
   "dataMode": "mock",
@@ -199,7 +200,7 @@
   "highlight": { "enabled": true, "holdMs": 320, "clearBeforeAction": true },
   "overlay": { "animation": "safe-opacity", "settleMs": 160, "chapterBanner": false },
   "segmentation": "segmented",
-  "segmentTransitionCover": { "enabled": "auto", "durationMs": 1100 },
+  "segmentTransitionCover": { "enabled": "auto", "durationMs": 2400, "fadeInMs": 180, "fadeOutMs": 380 },
   "cover": { "enabled": true, "mode": "with-candidates", "width": 1280, "height": 720 },
   "postProduction": { "reviewPage": true, "polishPreset": "customer-desktop", "screenStudioHandoff": false }
 }

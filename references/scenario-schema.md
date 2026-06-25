@@ -31,6 +31,7 @@
   },
   "narration": {
     "enabled": true,
+    "provider": "auto",
     "engine": "edge-tts",
     "language": "zh-CN",
     "voice": "zh-CN-YunyangNeural",
@@ -78,7 +79,9 @@
     "rerecordOnFailure": true,
     "transitionCover": {
       "enabled": "auto",
-      "durationMs": 1100,
+      "durationMs": 2400,
+      "fadeInMs": 180,
+      "fadeOutMs": 380,
       "style": "subtle-subcover",
       "label": "接下来"
     }
@@ -211,7 +214,8 @@
 - 某段失败时只重录该段。
 - 全部通过后再合并，合并后重新做媒体校验和抽帧复查。
 - `transitionCover.enabled="auto"`：只有 2 段及以上时在段间插入子封面；1 段时不加。
-- `transitionCover.durationMs`：段间子封面时长，默认约 1100ms。客户可发版一般保持 800-1200ms，避免打断观看。
+- `transitionCover.durationMs`：段间子封面时长，默认约 2400ms。客户可发版一般保持 2000-2500ms，中文标题较长、需要观众理解章节目标时可以继续加长。
+- `transitionCover.fadeInMs` / `fadeOutMs`：段间子封面淡入/淡出时长，默认短淡入和柔和淡出，避免章节卡一闪而过。
 - 子封面用于提示下一段标题，必须沿用主封面的真实录屏抽帧、色彩和字体，但标题更小、文案更短、无强 badge，让它看起来像同一条视频里的转场。
 
 ## PostProduction 字段
@@ -314,6 +318,33 @@ scaffold 默认把 `requireDbAssertions=false`，因为多数项目首次跑时�
 ## Narration 字段
 
 caption 或 step 可以加 `narration` 覆盖解说文案。没有该字段时，TTS 脚本默认使用 `title + body`。需要跳过某条字幕时设置 `"narration": false`。
+
+`scenario.narration.provider` 记录 scaffold 时的选择：`auto`、`macos-say`、`local-system`、`edge-tts` 或 `doubao-tts-v3`。真正驱动合成的是 `engine` / `voice`；`provider=auto` 会按观众类型解析为客户版 `edge-tts`、其它场景 macOS 本机语音。
+
+豆包/火山 TTS v3 示例（不要把 key 写进 scenario）：
+
+```json
+{
+  "narration": {
+    "enabled": true,
+    "provider": "doubao-tts-v3",
+    "engine": "doubao-tts-v3",
+    "language": "zh-CN",
+    "voice": "zh_female_jitangmei_uranus_bigtts",
+    "doubaoEndpoint": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+    "doubaoResourceId": "seed-tts-2.0",
+    "doubaoModel": "seed-tts-2.0-expressive",
+    "doubaoSampleRate": 24000,
+    "doubaoBitRate": 128000,
+    "doubaoSpeechRate": 0,
+    "doubaoLoudnessRate": 20,
+    "padMode": "freeze",
+    "padBufferMs": 300
+  }
+}
+```
+
+运行时用 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY` 提供凭据。
 
 ## Media report 字段
 
