@@ -1003,6 +1003,17 @@ async function checkTtsScenarioSmoke() {
     if (!/doubao-tts-v3/.test(helpResult.stdout) || !/DOUBAO_TTS_API_KEY/.test(helpResult.stdout)) {
       fail("add-tts-narration --help 必须列出 doubao-tts-v3 和 DOUBAO_TTS_API_KEY 配置提示")
     }
+    if (!/shell history|process listings/.test(helpResult.stdout)) {
+      fail("add-tts-narration --help 必须提醒 --doubao-api-key 在共享机器上的历史记录/进程列表风险")
+    }
+    const scaffoldHelp = spawnSync(
+      "node",
+      ["scripts/scaffold-repo-demo.mjs", "--help"],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (scaffoldHelp.status !== 0 || !/--tts-voice/.test(scaffoldHelp.stdout)) {
+      fail("scaffold-repo-demo --help 必须列出 --tts-voice，允许用户在 scaffold 阶段选择声音")
+    }
 
     run("node", [
       "scripts/scaffold-repo-demo.mjs",
@@ -1019,6 +1030,25 @@ async function checkTtsScenarioSmoke() {
     const zhTwScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/tts-zh-tw.scenario.json"), "utf8"))
     if (zhTwScenario.narration?.voice !== "zh-TW-YunJheNeural") {
       fail(`customer + zh-TW scenario.narration.voice 应为 zh-TW-YunJheNeural，得到 ${zhTwScenario.narration?.voice}`)
+    }
+
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "tts-custom-voice",
+      "--data-mode", "mock",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--language", "zh-CN",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--tts-provider", "edge-tts",
+      "--tts-voice", "zh-CN-XiaoxiaoNeural",
+      "--force"
+    ])
+    const customVoiceScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/tts-custom-voice.scenario.json"), "utf8"))
+    if (customVoiceScenario.narration?.voice !== "zh-CN-XiaoxiaoNeural") {
+      fail(`--tts-voice 应写入 scenario.narration.voice，得到 ${customVoiceScenario.narration?.voice}`)
     }
 
     run("node", [
@@ -1053,6 +1083,12 @@ async function checkTtsScenarioSmoke() {
     const doubaoGuide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
     if (!/DOUBAO_TTS_API_KEY|VOLCENGINE_TTS_API_KEY/.test(doubaoGuide)) {
       fail("Doubao RECORDING_GUIDE 必须提示通过环境变量提供 API key")
+    }
+    if (!/stty -echo/.test(doubaoGuide) || !/unset DOUBAO_TTS_API_KEY/.test(doubaoGuide)) {
+      fail("Doubao RECORDING_GUIDE 必须提供不回显读取 key 并在合成后 unset 的安全步骤")
+    }
+    if (/DOUBAO_TTS_API_KEY=\.\.\./.test(doubaoGuide)) {
+      fail("Doubao RECORDING_GUIDE 不应建议把 API key 直接写进命令行示例")
     }
   } finally {
     await rm(tempRoot, { recursive: true, force: true })

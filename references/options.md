@@ -88,7 +88,7 @@
 - `doubao-tts-v3`：通过火山/豆包双向流式 TTS 合成，默认女声 `zh_female_jitangmei_uranus_bigtts`、`doubaoModel=seed-tts-2.0-expressive`、`doubaoResourceId=seed-tts-2.0`。需要联网，并通过 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY` 提供 key；不要把 key 写进 scenario。
 - `script-only`：只生成解说稿、VTT/JSON，不合成音频。
 
-解说语言默认跟字幕语言一致。中文建议语速 170-190 wpm；英文建议 155-175 wpm。正式演示应输出 transcript，方便人工校对。
+解说语言默认跟字幕语言一致。声音可在 scaffold 时用 `--tts-voice <voice>` 指定，也可改 `scenario.narration.voice`。在线 key 用不回显 prompt 临时导出到环境变量；共享机器上不要优先用 `--doubao-api-key`。中文建议语速 170-190 wpm；英文建议 155-175 wpm。正式演示应输出 transcript，方便人工校对。
 
 ## 解说混音
 

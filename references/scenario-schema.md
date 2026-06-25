@@ -319,7 +319,7 @@ scaffold 默认把 `requireDbAssertions=false`，因为多数项目首次跑时�
 
 caption 或 step 可以加 `narration` 覆盖解说文案。没有该字段时，TTS 脚本默认使用 `title + body`。需要跳过某条字幕时设置 `"narration": false`。
 
-`scenario.narration.provider` 记录 scaffold 时的选择：`auto`、`macos-say`、`local-system`、`edge-tts` 或 `doubao-tts-v3`。真正驱动合成的是 `engine` / `voice`；`provider=auto` 会按观众类型解析为客户版 `edge-tts`、其它场景 macOS 本机语音。
+`scenario.narration.provider` 记录 scaffold 时的选择：`auto`、`macos-say`、`local-system`、`edge-tts` 或 `doubao-tts-v3`。真正驱动合成的是 `engine` / `voice`；`provider=auto` 会按观众类型解析为客户版 `edge-tts`、其它场景 macOS 本机语音。声音可以在 scaffold 时用 `--tts-voice <voice>` 写入，也可以录制前直接改 `scenario.narration.voice`。
 
 豆包/火山 TTS v3 示例（不要把 key 写进 scenario）：
 
@@ -344,7 +344,7 @@ caption 或 step 可以加 `narration` 覆盖解说文案。没有该字段时�
 }
 ```
 
-运行时用 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY` 提供凭据。
+运行时用 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY` 提供凭据。不要把 key 写进 scenario；本地推荐用不回显 prompt 临时导出，合成后 `unset`。共享机器上尽量不要用 `--doubao-api-key`，因为命令行可能进入 shell history 或进程列表。
 
 ## Media report 字段
 

@@ -99,7 +99,7 @@ node <skill>/scripts/add-tts-narration.mjs \
   --scenario docs/recordings/add-data-flow.scenario.json
 ```
 
-推荐让 `--scenario` 读取 `scenario.narration.provider` / `engine` / `voice`。生成 scenario 时可用 `--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3` 选择合成提供商；CLI 显式 `--engine` / `--voice` 只用于临时覆盖。
+推荐让 `--scenario` 读取 `scenario.narration.provider` / `engine` / `voice`。生成 scenario 时可用 `--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3` 选择合成提供商，用 `--tts-voice <voice>` 指定声音；CLI 显式 `--engine` / `--voice` 只用于临时覆盖。
 
 Edge 在线中文示例：
 
@@ -112,18 +112,29 @@ node <skill>/scripts/add-tts-narration.mjs \
   --voice zh-CN-YunyangNeural
 ```
 
-豆包/火山 TTS v3 示例（key 只放环境变量）：
+豆包/火山 TTS v3 示例（key 只临时放环境变量，不写入命令历史、scenario 或文档）：
 
 ```bash
-DOUBAO_TTS_API_KEY=... node <skill>/scripts/add-tts-narration.mjs \
+printf "DOUBAO_TTS_API_KEY: "
+stty -echo
+trap 'stty echo' EXIT
+IFS= read -r DOUBAO_TTS_API_KEY
+stty echo
+trap - EXIT
+printf "\n"
+export DOUBAO_TTS_API_KEY
+
+node <skill>/scripts/add-tts-narration.mjs \
   --video docs/recordings/add-data-flow.mp4 \
   --report docs/recordings/add-data-flow-report.json \
   --out docs/recordings/add-data-flow-narrated.mp4 \
   --engine doubao-tts-v3 \
   --voice zh_female_jitangmei_uranus_bigtts
+
+unset DOUBAO_TTS_API_KEY
 ```
 
-`edge-tts` 和 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务。离线或文本敏感时改 `--engine macos-say`，voice 不存在会自动 fallback。
+`edge-tts` 和 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务。离线或文本敏感时改 `--engine macos-say`，voice 不存在会自动 fallback。共享机器上尽量不要用 `--doubao-api-key`，因为命令行可能进入 shell history 或进程列表。
 
 ## 4. 多段合并与段间子封面
 

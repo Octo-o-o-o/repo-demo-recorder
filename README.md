@@ -54,7 +54,7 @@ node scripts/check-skill.mjs
 - 目标 Web 项目中可用 Playwright，或者目标项目允许安装/运行 Playwright
 - 可选：macOS `say`，用于本地离线 TTS
 - 可选：`uvx` + `edge-tts`，用于质量更好的在线 TTS
-- 可选：火山/豆包 TTS v3 key（运行时放 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY`），用于豆包在线语音合成
+- 可选：火山/豆包 TTS v3 key（运行时临时放 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY`），用于豆包在线语音合成；不要写进 scenario、文档、runner 或会提交的 env 文件
 - 可选：Playwright，用于封面渲染；缺失时 `generate-video-cover.mjs` 会退化到 ffmpeg drawtext 或抽帧方案
 
 如果 fallback 封面文字需要更好的字体，可设置：
@@ -162,24 +162,45 @@ node <skill>/scripts/add-tts-narration.mjs \
   --video docs/recordings/customer-demo.mp4 \
   --report docs/recordings/customer-demo-report.json \
   --out docs/recordings/customer-demo-narrated.mp4 \
-    --engine edge-tts \
-    --voice zh-CN-YunyangNeural \
-    --pad-mode freeze \
-    --pad-buffer-ms 300
+  --engine edge-tts \
+  --voice zh-CN-YunyangNeural \
+  --pad-mode freeze \
+  --pad-buffer-ms 300
 ```
 
-如需使用豆包女声，先把 key 放到环境变量，再指定 engine：
+脚手架也可以在生成 scenario 时直接选择 provider 和声音：
 
 ```bash
-DOUBAO_TTS_API_KEY=... node <skill>/scripts/add-tts-narration.mjs \
+node <skill>/scripts/scaffold-repo-demo.mjs \
+  --name customer-demo \
+  --data-mode mock \
+  --tts-provider doubao-tts-v3 \
+  --tts-voice zh_female_jitangmei_uranus_bigtts
+```
+
+如需使用豆包女声，先用不回显的 prompt 临时注入 key，再运行合成；结束后清掉环境变量：
+
+```bash
+printf "DOUBAO_TTS_API_KEY: "
+stty -echo
+trap 'stty echo' EXIT
+IFS= read -r DOUBAO_TTS_API_KEY
+stty echo
+trap - EXIT
+printf "\n"
+export DOUBAO_TTS_API_KEY
+
+node <skill>/scripts/add-tts-narration.mjs \
   --video docs/recordings/customer-demo.mp4 \
   --report docs/recordings/customer-demo-report.json \
   --out docs/recordings/customer-demo-narrated.mp4 \
   --engine doubao-tts-v3 \
   --voice zh_female_jitangmei_uranus_bigtts
+
+unset DOUBAO_TTS_API_KEY
 ```
 
-脚手架也可以直接选择 provider：`--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3`。`edge-tts` 与 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务；涉及敏感内容且没有授权时，使用 `macos-say` 或只生成解说稿。不要把 API key 写进 scenario 或文档。
+脚手架 provider 可选：`--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3`。声音可用 `--tts-voice <voice>` 或直接改 `scenario.narration.voice`。`edge-tts` 与 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务；涉及敏感内容且没有授权时，使用 `macos-say` 或只生成解说稿。不要把 API key 写进 scenario 或文档；共享机器上尽量不要用 `--doubao-api-key`，因为命令行可能进入 shell history 或进程列表。
 
 ### 5. 合并多段视频
 

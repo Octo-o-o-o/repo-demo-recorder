@@ -198,15 +198,16 @@ node <skill>/scripts/add-tts-narration.mjs \
   --scenario docs/recordings/<flow>.scenario.json
 ```
 
-`scaffold-repo-demo.mjs` 可用 `--tts-provider` 选择合成提供商：
+`scaffold-repo-demo.mjs` 可用 `--tts-provider` 选择合成提供商，用 `--tts-voice` 指定声音：
 
 ```bash
 --tts-provider auto | macos-say | local-system | edge-tts | doubao-tts-v3
+--tts-voice <voice>
 ```
 
-默认 `auto` 规则：客户可发版用 `edge-tts`（中文 `zh-CN-YunyangNeural`，英文 `en-US-GuyNeural`）；内部评审、QA、培训默认用 macOS 本机语音。需要豆包女声时用 `--tts-provider doubao-tts-v3`，scenario 会写入 `engine=doubao-tts-v3`、`voice=zh_female_jitangmei_uranus_bigtts`、`doubaoModel=seed-tts-2.0-expressive`、`doubaoResourceId=seed-tts-2.0` 等非敏感配置。
+默认 `auto` 规则：客户可发版用 `edge-tts`（简中 `zh-CN-YunyangNeural`、繁中 `zh-TW-YunJheNeural`、英文 `en-US-GuyNeural`）；内部评审、QA、培训默认用 macOS 本机语音。需要豆包女声时用 `--tts-provider doubao-tts-v3 --tts-voice zh_female_jitangmei_uranus_bigtts`，scenario 会写入 `engine=doubao-tts-v3`、`voice=...`、`doubaoModel=seed-tts-2.0-expressive`、`doubaoResourceId=seed-tts-2.0` 等非敏感配置。也可以直接修改 `scenario.narration.voice`，再让 add-tts 用 `--scenario` 读取。
 
-不要把 TTS API key 写进 scenario、guide、runner 或 skill 文档。`doubao-tts-v3` 运行时只从 `DOUBAO_TTS_API_KEY` / `VOLCENGINE_TTS_API_KEY`（或临时 CLI `--doubao-api-key`）读取 key。`edge-tts` 和 `doubao-tts-v3` 都是在线 TTS，会把解说文本发送到对应服务；敏感内容没有授权时改用 macOS `say`、本地语音或只输出文稿。
+不要把 TTS API key 写进 scenario、guide、runner 或 skill 文档。`doubao-tts-v3` 运行时只从 `DOUBAO_TTS_API_KEY` / `VOLCENGINE_TTS_API_KEY`（或自动化场景的临时 CLI `--doubao-api-key`）读取 key。本地推荐用不回显的 shell prompt 临时 `export DOUBAO_TTS_API_KEY`，合成完成后 `unset DOUBAO_TTS_API_KEY`；共享机器上尽量不要用 `--doubao-api-key`，因为命令行可能进入 shell history 或进程列表。`edge-tts` 和 `doubao-tts-v3` 都是在线 TTS，会把解说文本发送到对应服务；敏感内容没有授权时改用 macOS `say`、本地语音或只输出文稿。
 
 TTS 默认 `--pad-mode freeze`：语音比展示窗口长时，在对应 cue 末尾插入冻结帧并平移后续时间轴。不要截断音频。单段 padding 超过上限时，优先缩短文案。
 

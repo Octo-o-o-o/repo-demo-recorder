@@ -18,6 +18,7 @@ const DEFAULTS = {
   surface: "auto",
   dataMode: "mock",
   ttsProvider: "auto",
+  ttsVoice: null,
   allowProduction: false,
   force: false
 }
@@ -210,6 +211,8 @@ Options:
                          and locks the scenario to readonly with a strict checklist.
   --tts-provider <name>   auto | macos-say | local-system | edge-tts | doubao-tts-v3
                          (default: auto; customer -> edge-tts, others -> macos-say)
+  --tts-voice <voice>     Override scenario.narration.voice. Examples:
+                         zh-CN-YunyangNeural, Samantha, zh_female_jitangmei_uranus_bigtts
   --allow-production     Confirm you have written authorization to record against
                          production data. Without this flag --data-mode production fails.
   --out <dir>            Output docs dir (default: docs/recordings)
@@ -244,9 +247,9 @@ Options:
     // 之前 --audiance customer 会被静默写入 args.audiance，然后按默认 audience=qa-proof 跑下去。
     if (!(key in DEFAULTS)) {
       throw new Error(
-        `无法识别参数：${token}（拼写或大小写有误？）。详见 --help。\n` +
+          `无法识别参数：${token}（拼写或大小写有误？）。详见 --help。\n` +
           `  当前支持：--root --name --language --subtitles --flows --base-url --audience ` +
-          `--polish --surface --data-mode --tts-provider --allow-production --out --force`
+          `--polish --surface --data-mode --tts-provider --tts-voice --allow-production --out --force`
       )
     }
 
@@ -388,7 +391,7 @@ function buildNarrationConfig(args) {
     provider: args.ttsProvider,
     engine,
     language: args.language,
-    voice: defaultNarrationVoice(args.language, engine),
+    voice: args.ttsVoice || defaultNarrationVoice(args.language, engine),
     rate: args.language === "en-US" ? 165 : 180,
     mix: "replace",
     timing: "auto",
@@ -1004,9 +1007,9 @@ function buildTtsProviderNote(scenario, isEn) {
   if (isEn) {
     const common =
       `> TTS provider: scaffold \`--tts-provider=${provider}\` resolved to \`engine=${engine}\`, \`voice=${voice}\`. ` +
-      "To switch provider, re-run scaffold with `--tts-provider ...` or edit `scenario.narration.engine` / `voice`."
+      "To switch provider or voice, re-run scaffold with `--tts-provider ... --tts-voice ...`, or edit `scenario.narration.engine` / `voice`."
     if (engine === "doubao-tts-v3") {
-      return `${common}\n> \`doubao-tts-v3\` uses Volcengine/Doubao streaming TTS. Keep API keys out of scenario files; set \`DOUBAO_TTS_API_KEY\` or \`VOLCENGINE_TTS_API_KEY\` in the shell before running add-tts.`
+      return `${common}\n> \`doubao-tts-v3\` uses Volcengine/Doubao streaming TTS. Keep API keys out of scenario files, guides, runner scripts, and committed env files. Prefer a non-echoing shell prompt before running add-tts:\n\n\`\`\`bash\nprintf \"DOUBAO_TTS_API_KEY: \"\nstty -echo\ntrap 'stty echo' EXIT\nIFS= read -r DOUBAO_TTS_API_KEY\nstty echo\ntrap - EXIT\nprintf \"\\n\"\nexport DOUBAO_TTS_API_KEY\nnode <skill>/scripts/add-tts-narration.mjs --video ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.mp4 --report ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-report.json --out ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-narrated.mp4 --scenario ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.scenario.json\nunset DOUBAO_TTS_API_KEY\n\`\`\`\n\n> In CI, use a masked secret. Avoid \`--doubao-api-key\` on shared machines because command lines can be stored in shell history or process listings.`
     }
     if (engine === "edge-tts") {
       return `${common}\n> \`edge-tts\` needs \`uvx\` and network access; it sends narration text to Microsoft Edge online TTS. For offline/private text, use \`--tts-provider macos-say\` or edit the scenario.`
@@ -1016,9 +1019,9 @@ function buildTtsProviderNote(scenario, isEn) {
 
   const common =
     `> TTS provider：脚手架 \`--tts-provider=${provider}\` 解析为 \`engine=${engine}\`、\`voice=${voice}\`。` +
-    "要换服务商，可重新 scaffold 加 `--tts-provider ...`，或直接改 `scenario.narration.engine` / `voice`。"
+    "要换服务商或声音，可重新 scaffold 加 `--tts-provider ... --tts-voice ...`，或直接改 `scenario.narration.engine` / `voice`。"
   if (engine === "doubao-tts-v3") {
-    return `${common}\n> \`doubao-tts-v3\` 使用火山/豆包流式 TTS。不要把 API key 写进 scenario；运行 add-tts 前在 shell 里设置 \`DOUBAO_TTS_API_KEY\` 或 \`VOLCENGINE_TTS_API_KEY\`。`
+    return `${common}\n> \`doubao-tts-v3\` 使用火山/豆包流式 TTS。不要把 API key 写进 scenario、guide、runner 或会提交的 env 文件。推荐用不回显的 shell prompt 临时注入，再运行 add-tts：\n\n\`\`\`bash\nprintf \"DOUBAO_TTS_API_KEY: \"\nstty -echo\ntrap 'stty echo' EXIT\nIFS= read -r DOUBAO_TTS_API_KEY\nstty echo\ntrap - EXIT\nprintf \"\\n\"\nexport DOUBAO_TTS_API_KEY\nnode <skill>/scripts/add-tts-narration.mjs --video ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.mp4 --report ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-report.json --out ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-narrated.mp4 --scenario ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.scenario.json\nunset DOUBAO_TTS_API_KEY\n\`\`\`\n\n> CI 中使用 masked secret。共享机器上尽量不要用 \`--doubao-api-key\`，因为命令行可能进入 shell history 或进程列表。`
   }
   if (engine === "edge-tts") {
     return `${common}\n> \`edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。涉及敏感内容或不能使用在线 TTS 时，改用 \`--tts-provider macos-say\` 或修改 scenario。`

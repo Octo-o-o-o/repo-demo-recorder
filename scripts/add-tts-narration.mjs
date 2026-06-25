@@ -103,6 +103,9 @@ edge-tts tuning:
 Doubao / Volcengine TTS v3 tuning:
   --doubao-api-key <key>        API key. Prefer env DOUBAO_TTS_API_KEY,
                                 VOLCENGINE_TTS_API_KEY, or VOLCENGINE_API_KEY.
+                                Avoid this flag on shared machines because
+                                command lines may be stored in shell history
+                                or process listings.
   --doubao-endpoint <wss-url>   WebSocket endpoint
                                 (default: openspeech v3 bidirection)
   --doubao-resource-id <id>     Resource id (default: seed-tts-2.0)
@@ -141,11 +144,20 @@ Examples:
     --engine edge-tts --voice zh-CN-YunyangNeural
 
   # Force Doubao / Volcengine TTS v3 (set key in env, not in scenario)
-  DOUBAO_TTS_API_KEY=... node scripts/add-tts-narration.mjs \\
+  printf "DOUBAO_TTS_API_KEY: "
+  stty -echo
+  trap 'stty echo' EXIT
+  IFS= read -r DOUBAO_TTS_API_KEY
+  stty echo
+  trap - EXIT
+  printf "\\n"
+  export DOUBAO_TTS_API_KEY
+  node scripts/add-tts-narration.mjs \\
     --video docs/recordings/demo.mp4 \\
     --report docs/recordings/demo-report.json \\
     --out docs/recordings/demo-narrated.mp4 \\
     --engine doubao-tts-v3 --voice zh_female_jitangmei_uranus_bigtts
+  unset DOUBAO_TTS_API_KEY
 `)
     process.exit(0)
   }
