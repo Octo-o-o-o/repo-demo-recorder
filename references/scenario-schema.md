@@ -162,6 +162,8 @@
 }
 ```
 
+> **安全注记**：`server.command` 会以 shell 方式整串执行（信任级别等同 package.json scripts）。只写你自己项目的启动命令；不要把来路不明的 scenario 文件原样拿来跑，也不要在 command 里拼接任何来自外部输入的内容。
+
 ## Audience / Narrative 字段
 
 - `audience`: `customer`、`internal-review`、`qa-proof`、`training`、`release-pr`。

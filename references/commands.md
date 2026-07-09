@@ -37,7 +37,7 @@ node <skill>/scripts/prepare-recording-worktree.mjs \
 node <skill>/scripts/cleanup-recording-worktree.mjs --worktree <worktreePath>
 ```
 
-默认拷回 `docs/recordings/` 和 `scripts/recordings/`。如果改了 `--out`，补 `--copy <relPath>`：
+默认拷回 `docs/recordings/` 和 `scripts/recordings/`。如果 scaffold 时用 `scaffold-repo-demo.mjs --out` 改过产物目录，cleanup 时补 `--copy <relPath>` 指向那个目录：
 
 ```bash
 node <skill>/scripts/cleanup-recording-worktree.mjs \

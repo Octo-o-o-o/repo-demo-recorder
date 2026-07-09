@@ -461,6 +461,12 @@ async function makeContactSheet(page, images, outPath, args) {
 }
 
 const args = parseArgs(process.argv.slice(2))
+for (const tool of ["ffmpeg", "ffprobe"]) {
+  if (spawnSync(tool, ["-version"], { stdio: "ignore" }).error) {
+    console.error(`需要 ${tool} 才能生成封面：请先安装（macOS: brew install ffmpeg），再重跑本命令`)
+    process.exit(1)
+  }
+}
 const videoPath = path.resolve(args.video)
 const outputPath = path.resolve(args.out)
 const report = args.report ? JSON.parse(await readFile(path.resolve(args.report), "utf8")) : null

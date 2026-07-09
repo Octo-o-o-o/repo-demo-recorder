@@ -90,6 +90,8 @@ iOS、Android、macOS 原生 App、Flutter Desktop、Tauri 桌面壳、Electron 
 
 ### 1. 建隔离 worktree
 
+下文所有命令中 `<skill>` 指本 skill 的安装路径（如 `~/.codex/skills/repo-demo-recorder` 或 `~/.claude/skills/repo-demo-recorder`），在目标项目根目录执行。
+
 默认在目标项目中创建录制 worktree，避免污染主工作树：
 
 ```bash
@@ -211,7 +213,7 @@ node <skill>/scripts/add-tts-narration.mjs \
 
 TTS 默认 `--pad-mode freeze`：语音比展示窗口长时，在对应 cue 末尾插入冻结帧并平移后续时间轴。不要截断音频。单段 padding 超过上限时，优先缩短文案。
 
-客户可发版还要检查音量。`validate-recording-report.mjs` 默认只判断非静音；公开视频或客户演示建议把最终 `ffmpeg volumedetect` 的 `max_volume` 控制在约 `-12dB` 到 `-3dB`，明显低于 `-18dB` 时应在后期做增益或重新合成。不要靠播放器手动拉高音量来掩盖源文件音量偏小。
+客户可发版还要检查音量。`validate-recording-report.mjs` 默认只判断非静音（`--min-audio-max-db -50`）；客户可发版给校验命令加 `--min-audio-max-db -18` 让音量门禁自动生效，并建议把最终 `ffmpeg volumedetect` 的 `max_volume` 控制在约 `-12dB` 到 `-3dB`，明显低于 `-18dB` 时应在后期做增益或重新合成。不要靠播放器手动拉高音量来掩盖源文件音量偏小。
 
 ### 7. 合并多段视频
 

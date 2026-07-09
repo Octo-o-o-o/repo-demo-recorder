@@ -469,7 +469,7 @@ function pickMacosVoiceFallback(language, voices) {
 
 async function synthesizeWithMacosSay(cues, args, tempDir) {
   if (!commandExists("say")) {
-    throw new Error("当前系统没有 macOS say 命令，无法使用 local-system TTS")
+    throw new Error(`当前系统没有 macOS say 命令，无法使用 ${args.engine || "macos-say / local-system"} TTS；Linux/Windows 请改用 --engine edge-tts 或 doubao-tts-v3`)
   }
 
   const voices = listMacosVoices()
