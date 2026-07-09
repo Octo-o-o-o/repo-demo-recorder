@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawn, spawnSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
+import { createRequire } from "node:module"
 
 const DEFAULTS = {
   engine: "macos-say",
@@ -14,6 +16,14 @@ const DEFAULTS = {
   edgeRate: "+0%",
   edgePitch: "+0Hz",
   edgeVolume: "+0%",
+  doubaoApiKey: null,
+  doubaoEndpoint: "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+  doubaoResourceId: "seed-tts-2.0",
+  doubaoModel: "seed-tts-2.0-expressive",
+  doubaoSampleRate: 24000,
+  doubaoBitRate: 128000,
+  doubaoSpeechRate: 0,
+  doubaoLoudnessRate: 20,
   timing: "auto",
   mix: "replace",
   originalVolume: 0.18,
@@ -40,6 +50,13 @@ const SCENARIO_NARRATION_FIELDS = [
   ["edgeRate", "edgeRate"],
   ["edgePitch", "edgePitch"],
   ["edgeVolume", "edgeVolume"],
+  ["doubaoEndpoint", "doubaoEndpoint"],
+  ["doubaoResourceId", "doubaoResourceId"],
+  ["doubaoModel", "doubaoModel"],
+  ["doubaoSampleRate", "doubaoSampleRate"],
+  ["doubaoBitRate", "doubaoBitRate"],
+  ["doubaoSpeechRate", "doubaoSpeechRate"],
+  ["doubaoLoudnessRate", "doubaoLoudnessRate"],
   ["timing", "timing"],
   ["mix", "mix"],
   ["padMode", "padMode"],
@@ -67,7 +84,7 @@ Common options:
                           scenario.narration. Any CLI flag below overrides
                           the scenario value. RECOMMENDED so the engine
                           choice lives in one place (the scenario file).
-  --engine <engine>       macos-say | local-system | edge-tts (default: macos-say)
+  --engine <engine>       macos-say | local-system | edge-tts | doubao-tts-v3 (default: macos-say)
   --language <locale>     zh-CN | zh-TW | en-US (default: zh-CN)
   --voice <voice>         TTS voice name (engine-specific; see --help docs)
   --rate <wpm>            macOS say speech rate (default: 165 en-US, 180 zh-CN)
@@ -82,6 +99,21 @@ edge-tts tuning:
   --edge-rate <value>     edge-tts rate, e.g. +0% / -10%
   --edge-pitch <value>    edge-tts pitch, e.g. +0Hz
   --edge-volume <value>   edge-tts volume, e.g. +0%
+
+Doubao / Volcengine TTS v3 tuning:
+  --doubao-api-key <key>        API key. Prefer env DOUBAO_TTS_API_KEY,
+                                VOLCENGINE_TTS_API_KEY, or VOLCENGINE_API_KEY.
+                                Avoid this flag on shared machines because
+                                command lines may be stored in shell history
+                                or process listings.
+  --doubao-endpoint <wss-url>   WebSocket endpoint
+                                (default: openspeech v3 bidirection)
+  --doubao-resource-id <id>     Resource id (default: seed-tts-2.0)
+  --doubao-model <model>        seed-tts-2.0-standard | seed-tts-2.0-expressive
+  --doubao-sample-rate <hz>     Audio sample rate (default: 24000)
+  --doubao-bit-rate <bps>       MP3 bit rate (default: 128000)
+  --doubao-speech-rate <n>      -50..100 (default: 0)
+  --doubao-loudness-rate <n>    -50..100 (default: 20)
 
 Mixing volumes (only when --mix is duck/keep-original):
   --original-volume <n>   Original audio volume (default: 0.18)
@@ -110,6 +142,22 @@ Examples:
     --report docs/recordings/demo-report.json \\
     --out docs/recordings/demo-narrated.mp4 \\
     --engine edge-tts --voice zh-CN-YunyangNeural
+
+  # Force Doubao / Volcengine TTS v3 (set key in env, not in scenario)
+  printf "DOUBAO_TTS_API_KEY: "
+  stty -echo
+  trap 'stty echo' EXIT
+  IFS= read -r DOUBAO_TTS_API_KEY
+  stty echo
+  trap - EXIT
+  printf "\\n"
+  export DOUBAO_TTS_API_KEY
+  node scripts/add-tts-narration.mjs \\
+    --video docs/recordings/demo.mp4 \\
+    --report docs/recordings/demo-report.json \\
+    --out docs/recordings/demo-narrated.mp4 \\
+    --engine doubao-tts-v3 --voice zh_female_jitangmei_uranus_bigtts
+  unset DOUBAO_TTS_API_KEY
 `)
     process.exit(0)
   }
@@ -140,7 +188,7 @@ Examples:
     // 之前不校验，--engin macos-say 会被静默赋给 args.engin，然后跑默认 engine。
     if (!(camelKey in args) && camelKey !== "video" && camelKey !== "report" && camelKey !== "out") {
       throw new Error(
-        `无法识别参数：${token}。可用参数见 --help（包括 --video/--report/--out/--scenario/--engine/--voice/--rate/--language/--timing/--mix/--pad-mode/--pad-buffer-ms/--max-padding-ms/--video-codec/--video-crf/--video-preset/--original-volume/--narration-volume/--edge-rate/--edge-pitch/--edge-volume/--keep-temp）。`
+        `无法识别参数：${token}。可用参数见 --help（包括 --video/--report/--out/--scenario/--engine/--voice/--rate/--language/--timing/--mix/--pad-mode/--pad-buffer-ms/--max-padding-ms/--video-codec/--video-crf/--video-preset/--original-volume/--narration-volume/--edge-rate/--edge-pitch/--edge-volume/--doubao-api-key/--keep-temp）。`
       )
     }
     args[camelKey] = value
@@ -179,6 +227,10 @@ Examples:
   args.padBufferMs = Number(args.padBufferMs)
   args.maxPaddingMs = Number(args.maxPaddingMs)
   args.videoCrf = Number(args.videoCrf)
+  args.doubaoSampleRate = Number(args.doubaoSampleRate)
+  args.doubaoBitRate = Number(args.doubaoBitRate)
+  args.doubaoSpeechRate = Number(args.doubaoSpeechRate)
+  args.doubaoLoudnessRate = Number(args.doubaoLoudnessRate)
   args.voice = args.voice || defaultVoice(args.language, args.engine)
 
   if (!Number.isFinite(args.rate) || args.rate <= 0) {
@@ -204,6 +256,21 @@ Examples:
   if (typeof args.videoCodec !== "string" || !args.videoCodec.trim()) {
     throw new Error("--video-codec 必须是 ffmpeg 视频编码器名（如 libx264）")
   }
+  if (args.engine === "doubao-tts" || args.engine === "doubao-tts-v3") {
+    args.doubaoApiKey =
+      args.doubaoApiKey ||
+      process.env.DOUBAO_TTS_API_KEY ||
+      process.env.VOLCENGINE_TTS_API_KEY ||
+      process.env.VOLCENGINE_API_KEY
+    if (!args.doubaoApiKey) {
+      throw new Error(
+        "使用 doubao-tts-v3 需要 --doubao-api-key，或设置 DOUBAO_TTS_API_KEY / VOLCENGINE_TTS_API_KEY"
+      )
+    }
+    for (const key of ["doubaoSampleRate", "doubaoBitRate", "doubaoSpeechRate", "doubaoLoudnessRate"]) {
+      if (!Number.isFinite(args[key])) throw new Error(`--${key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)} 必须是数字`)
+    }
+  }
 
   return args
 }
@@ -213,6 +280,9 @@ function toCamelCase(value) {
 }
 
 function defaultVoice(language, engine = "macos-say") {
+  if (engine === "doubao-tts" || engine === "doubao-tts-v3") {
+    return "zh_female_jitangmei_uranus_bigtts"
+  }
   if (engine === "edge-tts") {
     if (language === "en-US") return "en-US-GuyNeural"
     if (language === "zh-TW") return "zh-TW-YunJheNeural"
@@ -399,7 +469,7 @@ function pickMacosVoiceFallback(language, voices) {
 
 async function synthesizeWithMacosSay(cues, args, tempDir) {
   if (!commandExists("say")) {
-    throw new Error("当前系统没有 macOS say 命令，无法使用 local-system TTS")
+    throw new Error(`当前系统没有 macOS say 命令，无法使用 ${args.engine || "macos-say / local-system"} TTS；Linux/Windows 请改用 --engine edge-tts 或 doubao-tts-v3`)
   }
 
   const voices = listMacosVoices()
@@ -485,6 +555,371 @@ async function synthesizeWithEdgeTts(cues, args, tempDir) {
     files.push(audioPath)
   }
 
+  return files
+}
+
+const DOUBAO_MSG_TYPE = {
+  FullClientRequest: 0b1,
+  FullServerResponse: 0b1001,
+  AudioOnlyServer: 0b1011,
+  Error: 0b1111
+}
+
+const DOUBAO_FLAG = {
+  NoSeq: 0,
+  PositiveSeq: 0b1,
+  NegativeSeq: 0b11,
+  WithEvent: 0b100
+}
+
+const DOUBAO_EVENT = {
+  StartConnection: 1,
+  FinishConnection: 2,
+  ConnectionStarted: 50,
+  ConnectionFailed: 51,
+  ConnectionFinished: 52,
+  StartSession: 100,
+  FinishSession: 102,
+  SessionStarted: 150,
+  SessionFinished: 152,
+  SessionFailed: 153,
+  TaskRequest: 200,
+  TTSSentenceStart: 350,
+  TTSSentenceEnd: 351,
+  TTSResponse: 352,
+  TTSSubtitle: 364
+}
+
+const DOUBAO_EVENT_NAME = new Map(Object.entries(DOUBAO_EVENT).map(([name, value]) => [value, name]))
+
+function writeInt32(value) {
+  const buffer = Buffer.alloc(4)
+  buffer.writeInt32BE(value, 0)
+  return buffer
+}
+
+function writeUInt32(value) {
+  const buffer = Buffer.alloc(4)
+  buffer.writeUInt32BE(value, 0)
+  return buffer
+}
+
+function writeString(value) {
+  const bytes = Buffer.from(value || "", "utf8")
+  return Buffer.concat([writeUInt32(bytes.length), bytes])
+}
+
+function shouldSkipSessionIdForEvent(event) {
+  return [
+    DOUBAO_EVENT.StartConnection,
+    DOUBAO_EVENT.FinishConnection,
+    DOUBAO_EVENT.ConnectionStarted,
+    DOUBAO_EVENT.ConnectionFailed,
+    DOUBAO_EVENT.ConnectionFinished
+  ].includes(event)
+}
+
+function encodeDoubaoMessage({ type = DOUBAO_MSG_TYPE.FullClientRequest, flag = DOUBAO_FLAG.WithEvent, event, sessionId = "", payload = Buffer.from("{}") }) {
+  const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+  const chunks = [
+    Buffer.from([
+      0x11, // version=1, header size=4 bytes
+      (type << 4) | flag,
+      0x10, // serialization=json, compression=none
+      0x00
+    ])
+  ]
+
+  if (flag === DOUBAO_FLAG.WithEvent) {
+    chunks.push(writeInt32(event))
+    if (!shouldSkipSessionIdForEvent(event)) {
+      chunks.push(writeString(sessionId))
+    }
+  }
+
+  chunks.push(writeUInt32(payloadBuffer.length), payloadBuffer)
+  return Buffer.concat(chunks)
+}
+
+function decodeDoubaoMessage(data) {
+  const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data)
+  if (buffer.length < 4) throw new Error(`Doubao TTS response too short: ${buffer.length}`)
+  const headerSize = (buffer[0] & 0x0f) * 4
+  const type = buffer[1] >> 4
+  const flag = buffer[1] & 0x0f
+  let offset = headerSize
+
+  const readInt32 = () => {
+    const value = buffer.readInt32BE(offset)
+    offset += 4
+    return value
+  }
+  const readUInt32 = () => {
+    const value = buffer.readUInt32BE(offset)
+    offset += 4
+    return value
+  }
+  const readString = () => {
+    const size = readUInt32()
+    const value = buffer.subarray(offset, offset + size).toString("utf8")
+    offset += size
+    return value
+  }
+
+  let sequence = 0
+  let errorCode = 0
+  if ([DOUBAO_MSG_TYPE.FullClientRequest, DOUBAO_MSG_TYPE.FullServerResponse, DOUBAO_MSG_TYPE.AudioOnlyServer].includes(type)) {
+    if (flag === DOUBAO_FLAG.PositiveSeq || flag === DOUBAO_FLAG.NegativeSeq) {
+      sequence = readInt32()
+    }
+  } else if (type === DOUBAO_MSG_TYPE.Error) {
+    errorCode = readUInt32()
+  }
+
+  let event = 0
+  let sessionId = ""
+  let connectId = ""
+  if (flag === DOUBAO_FLAG.WithEvent) {
+    event = readInt32()
+    if (!shouldSkipSessionIdForEvent(event)) {
+      sessionId = readString()
+    }
+    if ([DOUBAO_EVENT.ConnectionStarted, DOUBAO_EVENT.ConnectionFailed, DOUBAO_EVENT.ConnectionFinished].includes(event)) {
+      connectId = readString()
+    }
+  }
+
+  const payloadSize = offset + 4 <= buffer.length ? readUInt32() : 0
+  const payload = payloadSize > 0 ? buffer.subarray(offset, offset + payloadSize) : Buffer.alloc(0)
+  return { type, flag, event, eventName: DOUBAO_EVENT_NAME.get(event) || `EventType(${event})`, sessionId, connectId, sequence, errorCode, payload }
+}
+
+function parseDoubaoPayloadJson(message) {
+  if (!message.payload?.length) return null
+  try {
+    return JSON.parse(message.payload.toString("utf8"))
+  } catch {
+    return null
+  }
+}
+
+function debugDoubaoMessage(prefix, message) {
+  if (!process.env.REPO_DEMO_TTS_DEBUG) return
+  const payload = parseDoubaoPayloadJson(message)
+  const payloadSummary = payload
+    ? JSON.stringify(payload).slice(0, 500)
+    : message.payload?.length
+      ? `<binary ${message.payload.length} bytes>`
+      : "<empty>"
+  console.error(
+    `[doubao-debug] ${prefix} type=${message.type} flag=${message.flag} event=${message.eventName} payload=${payloadSummary}`
+  )
+}
+
+function loadWsConstructor() {
+  try {
+    const projectRequire = createRequire(path.join(process.cwd(), "package.json"))
+    const wsModule = projectRequire("ws")
+    return wsModule.WebSocket || wsModule.default || wsModule
+  } catch (error) {
+    if (typeof WebSocket === "function") return WebSocket
+    throw new Error(
+      `doubao-tts-v3 需要可设置 headers 的 WebSocket 客户端。当前项目未能加载 ws 包：${error.message || error}`
+    )
+  }
+}
+
+function createDoubaoQueue(ws) {
+  const queue = []
+  const waiters = []
+  let closedError = null
+
+  const push = (value) => {
+    const waiter = waiters.shift()
+    if (waiter) waiter.resolve(value)
+    else queue.push(value)
+  }
+  const fail = (error) => {
+    closedError = error
+    while (waiters.length > 0) waiters.shift().reject(error)
+  }
+
+  ws.on?.("message", (data) => {
+    try {
+      push(decodeDoubaoMessage(data))
+    } catch (error) {
+      fail(error)
+    }
+  })
+  ws.on?.("error", fail)
+  ws.on?.("close", (code, reason) => {
+    if (!closedError) fail(new Error(`Doubao TTS WebSocket closed: ${code} ${reason || ""}`.trim()))
+  })
+
+  return {
+    next() {
+      if (queue.length > 0) return Promise.resolve(queue.shift())
+      if (closedError) return Promise.reject(closedError)
+      return new Promise((resolve, reject) => waiters.push({ resolve, reject }))
+    }
+  }
+}
+
+function waitForWsOpen(ws) {
+  if (ws.readyState === 1) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    ws.once?.("open", resolve)
+    ws.once?.("error", reject)
+  })
+}
+
+function sendDoubaoJson(ws, event, payload, sessionId = "") {
+  const message = encodeDoubaoMessage({
+    type: DOUBAO_MSG_TYPE.FullClientRequest,
+    flag: DOUBAO_FLAG.WithEvent,
+    event,
+    sessionId,
+    payload: Buffer.from(JSON.stringify(payload), "utf8")
+  })
+  ws.send(message)
+}
+
+async function receiveUntil(queue, predicate, context) {
+  while (true) {
+    const message = await queue.next()
+    debugDoubaoMessage(context, message)
+    if (message.type === DOUBAO_MSG_TYPE.Error || message.event === DOUBAO_EVENT.ConnectionFailed || message.event === DOUBAO_EVENT.SessionFailed) {
+      const payload = parseDoubaoPayloadJson(message)
+      throw new Error(
+        `Doubao TTS ${context} failed at ${message.eventName}: ${JSON.stringify(payload || message.payload.toString("utf8"))}`
+      )
+    }
+    if (predicate(message)) return message
+  }
+}
+
+async function synthesizeOneDoubaoCue(cue, args, tempDir, WsConstructor) {
+  const audioPath = path.join(tempDir, `cue-${String(cue.index).padStart(3, "0")}.mp3`)
+  const connectId = randomUUID()
+  const sessionId = randomUUID()
+  const headers = {
+    "X-Api-Key": args.doubaoApiKey,
+    "X-Api-Resource-Id": args.doubaoResourceId,
+    "X-Api-Connect-Id": connectId,
+    "X-Control-Require-Usage-Tokens-Return": "*"
+  }
+  const ws = new WsConstructor(args.doubaoEndpoint, { headers })
+  const queue = createDoubaoQueue(ws)
+
+  try {
+    await waitForWsOpen(ws)
+    sendDoubaoJson(ws, DOUBAO_EVENT.StartConnection, {})
+    await receiveUntil(
+      queue,
+      (message) => message.type === DOUBAO_MSG_TYPE.FullServerResponse && message.event === DOUBAO_EVENT.ConnectionStarted,
+      "StartConnection"
+    )
+
+    sendDoubaoJson(
+      ws,
+      DOUBAO_EVENT.StartSession,
+      {
+        req_params: {
+          model: args.doubaoModel,
+          speaker: args.voice,
+          audio_params: {
+            format: "mp3",
+            sample_rate: args.doubaoSampleRate,
+            bit_rate: args.doubaoBitRate,
+            speech_rate: args.doubaoSpeechRate,
+            loudness_rate: args.doubaoLoudnessRate,
+            enable_subtitle: false
+          },
+          additions: JSON.stringify({
+            disable_markdown_filter: true,
+            disable_emoji_filter: false,
+            explicit_language: "zh-cn"
+          }),
+          aigc_watermark: false
+        }
+      },
+      sessionId
+    )
+    await receiveUntil(
+      queue,
+      (message) => message.type === DOUBAO_MSG_TYPE.FullServerResponse && message.event === DOUBAO_EVENT.SessionStarted,
+      "StartSession"
+    )
+
+    sendDoubaoJson(ws, DOUBAO_EVENT.TaskRequest, { req_params: { text: cue.text } }, sessionId)
+    sendDoubaoJson(ws, DOUBAO_EVENT.FinishSession, {}, sessionId)
+
+    const chunks = []
+    while (true) {
+      const message = await queue.next()
+      debugDoubaoMessage(`cue ${cue.index}`, message)
+      if (message.type === DOUBAO_MSG_TYPE.Error || message.event === DOUBAO_EVENT.SessionFailed) {
+        const payload = parseDoubaoPayloadJson(message)
+        throw new Error(
+          `Doubao TTS cue ${cue.index} failed at ${message.eventName}: ${JSON.stringify(payload || message.payload.toString("utf8"))}`
+        )
+      }
+      if (message.event === DOUBAO_EVENT.TTSResponse) {
+        if (message.type === DOUBAO_MSG_TYPE.AudioOnlyServer) {
+          chunks.push(message.payload)
+        } else {
+          const payload = parseDoubaoPayloadJson(message)
+          const base64 = payload?.audio || payload?.data || payload?.payload
+          if (base64) chunks.push(Buffer.from(base64, "base64"))
+        }
+      }
+      if (message.event === DOUBAO_EVENT.SessionFinished) break
+    }
+
+    if (chunks.length === 0) {
+      throw new Error(`Doubao TTS cue ${cue.index} 没有返回音频数据`)
+    }
+    await writeFile(audioPath, Buffer.concat(chunks))
+
+    sendDoubaoJson(ws, DOUBAO_EVENT.FinishConnection, {})
+    await receiveUntil(
+      queue,
+      (message) => message.type === DOUBAO_MSG_TYPE.FullServerResponse && message.event === DOUBAO_EVENT.ConnectionFinished,
+      "FinishConnection"
+    ).catch(() => null)
+    ws.close?.()
+    return audioPath
+  } finally {
+    if (ws.readyState === 1) ws.close?.()
+  }
+}
+
+async function synthesizeWithDoubaoTts(cues, args, tempDir) {
+  const WsConstructor = loadWsConstructor()
+  const files = []
+  for (const cue of cues) {
+    const maxAttempts = 3
+    let lastError = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        files.push(await synthesizeOneDoubaoCue(cue, args, tempDir, WsConstructor))
+        lastError = null
+        break
+      } catch (error) {
+        lastError = error
+        if (attempt < maxAttempts) {
+          const waitMs = 900 * attempt
+          console.warn(
+            `[tts] doubao cue ${cue.index} 第 ${attempt} 次失败，${waitMs}ms 后重试：${error.message?.split("\n")[0] || error}`
+          )
+          await new Promise((resolve) => setTimeout(resolve, waitMs))
+        }
+      }
+    }
+    if (lastError) {
+      throw new Error(`doubao cue ${cue.index} 在 ${maxAttempts} 次重试后仍然失败：${lastError.message || lastError}`)
+    }
+  }
   return files
 }
 
@@ -718,8 +1153,8 @@ async function muxNarration({
 
 const args = parseArgs(process.argv.slice(2))
 
-if (!["macos-say", "local-system", "edge-tts"].includes(args.engine)) {
-  throw new Error(`当前脚本仅支持 macos-say/local-system/edge-tts，收到：${args.engine}`)
+if (!["macos-say", "local-system", "edge-tts", "doubao-tts", "doubao-tts-v3"].includes(args.engine)) {
+  throw new Error(`当前脚本仅支持 macos-say/local-system/edge-tts/doubao-tts-v3，收到：${args.engine}`)
 }
 // 把生效的 engine/voice 打到 stdout，让用户能在一长串日志里一眼看到「这次到底用了什么 TTS」。
 // 历史上这条信息只能从最终的 narration-report.json 里翻，遇到「scenario 里写了 edge-tts 但实际跑的是 macos-say」时不容易发现。
@@ -753,6 +1188,8 @@ try {
   const audioFiles =
     args.engine === "edge-tts"
       ? await synthesizeWithEdgeTts(sourceCues, args, tempDir)
+      : args.engine === "doubao-tts" || args.engine === "doubao-tts-v3"
+        ? await synthesizeWithDoubaoTts(sourceCues, args, tempDir)
       : await synthesizeWithMacosSay(sourceCues, args, tempDir)
   const audioDurationsMs = []
   for (const file of audioFiles) {

@@ -18,7 +18,9 @@ const DEFAULTS = {
   segmentSubtitle: [],
   segmentLine: [],
   segmentReport: [],
-  transitionDurationMs: 1100,
+  transitionDurationMs: 2400,
+  transitionFadeInMs: 180,
+  transitionFadeOutMs: 380,
   transitionLabel: null,
   width: null,
   height: null,
@@ -48,7 +50,9 @@ Options:
   --segment-line <text>          Optional low-emphasis line for the segment transition; repeat in segment order
   --segment-report <json>        Segment report to merge into --combined-report; repeat in segment order
   --segments-dir <dir>           Directory for generated normalized segments and transition cover assets
-  --transition-duration-ms <n>   Transition duration between segments (default: 1100)
+  --transition-duration-ms <n>   Transition duration between segments (default: 2400)
+  --transition-fade-in-ms <n>    Fade-in duration for transition covers (default: 180)
+  --transition-fade-out-ms <n>   Fade-out duration for transition covers (default: 380)
   --transition-label <text>      Small label above the next segment title (default: 接下来 / Next)
   --width <px>                   Output width (default: first segment width)
   --height <px>                  Output height (default: first segment height)
@@ -97,6 +101,8 @@ function parseArgs(argv) {
 
   if (!args.out) throw new Error("缺少 --out <mp4>")
   args.transitionDurationMs = Number(args.transitionDurationMs)
+  args.transitionFadeInMs = Number(args.transitionFadeInMs)
+  args.transitionFadeOutMs = Number(args.transitionFadeOutMs)
   args.width = args.width == null ? null : Number(args.width)
   args.height = args.height == null ? null : Number(args.height)
   args.fps = args.fps == null ? null : Number(args.fps)
@@ -104,6 +110,12 @@ function parseArgs(argv) {
 
   if (!Number.isFinite(args.transitionDurationMs) || args.transitionDurationMs < 300) {
     throw new Error("--transition-duration-ms 必须是 >= 300 的数字")
+  }
+  if (!Number.isFinite(args.transitionFadeInMs) || args.transitionFadeInMs < 0) {
+    throw new Error("--transition-fade-in-ms 必须是 >= 0 的数字")
+  }
+  if (!Number.isFinite(args.transitionFadeOutMs) || args.transitionFadeOutMs < 0) {
+    throw new Error("--transition-fade-out-ms 必须是 >= 0 的数字")
   }
   if (args.width != null && (!Number.isFinite(args.width) || args.width < 320)) {
     throw new Error("--width 必须是 >= 320 的数字")
@@ -502,7 +514,16 @@ async function normalizeSegment(segment, outputPath, target, args) {
 
 async function makeTransitionClip(imagePath, outputPath, target, args) {
   const durationSeconds = args.transitionDurationMs / 1000
-  const fadeOutStart = Math.max(0, durationSeconds - 0.16)
+  const fadeInSeconds = Math.min(args.transitionFadeInMs / 1000, durationSeconds / 3)
+  const fadeOutSeconds = Math.min(args.transitionFadeOutMs / 1000, durationSeconds / 3)
+  const videoFilters = [`scale=${target.width}:${target.height}`, "setsar=1", `fps=${target.fps}`, "format=yuv420p"]
+  if (fadeInSeconds > 0) {
+    videoFilters.push(`fade=t=in:st=0:d=${fadeInSeconds.toFixed(3)}`)
+  }
+  if (fadeOutSeconds > 0) {
+    const fadeOutStart = Math.max(0, durationSeconds - fadeOutSeconds)
+    videoFilters.push(`fade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutSeconds.toFixed(3)}`)
+  }
   await run("ffmpeg", [
     "-y",
     "-loop",
@@ -518,7 +539,7 @@ async function makeTransitionClip(imagePath, outputPath, target, args) {
     "-i",
     "anullsrc=channel_layout=stereo:sample_rate=44100",
     "-filter_complex",
-    `[0:v]scale=${target.width}:${target.height},setsar=1,fps=${target.fps},format=yuv420p,fade=t=in:st=0:d=0.10,fade=t=out:st=${fadeOutStart.toFixed(3)}:d=0.16[v];[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a]`,
+    `[0:v]${videoFilters.join(",")}[v];[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a]`,
     "-map",
     "[v]",
     "-map",
@@ -591,7 +612,9 @@ function mergeReports(segments, assembly, args) {
       schema: assembly.schema,
       sourceReports: segments.map((segment) => segment.reportPath).filter(Boolean),
       transitionCount: assembly.transitionCount,
-      transitionDurationMs: args.transitionDurationMs
+      transitionDurationMs: args.transitionDurationMs,
+      transitionFadeInMs: args.transitionFadeInMs,
+      transitionFadeOutMs: args.transitionFadeOutMs
     },
     captions: [],
     steps: [],
@@ -694,6 +717,8 @@ async function main() {
       segmentCount: segments.length,
       transitionCount: Math.max(0, segments.length - 1),
       transitionDurationMs: segments.length > 1 ? args.transitionDurationMs : 0,
+      transitionFadeInMs: segments.length > 1 ? args.transitionFadeInMs : 0,
+      transitionFadeOutMs: segments.length > 1 ? args.transitionFadeOutMs : 0,
       target,
       renderer: null,
       skippedReason: segments.length === 1 ? "single segment: no intermediate transition cover needed" : null,

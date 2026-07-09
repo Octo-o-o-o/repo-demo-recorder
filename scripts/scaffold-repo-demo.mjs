@@ -17,9 +17,13 @@ const DEFAULTS = {
   polish: "formal-delivery",
   surface: "auto",
   dataMode: "mock",
+  ttsProvider: "auto",
+  ttsVoice: null,
   allowProduction: false,
   force: false
 }
+
+const TTS_PROVIDERS = ["auto", "macos-say", "local-system", "edge-tts", "doubao-tts-v3"]
 
 // 检测项目类型与默认运行参数。返回 { kind, packageManager, devCommand, port, baseUrl, warnings }
 async function detectProject(rootDir) {
@@ -205,6 +209,10 @@ Options:
                          staging: staging tenant + demo account; provide auth.storageState.
                          production: real customer data; REQUIRES --allow-production
                          and locks the scenario to readonly with a strict checklist.
+  --tts-provider <name>   auto | macos-say | local-system | edge-tts | doubao-tts-v3
+                         (default: auto; customer -> edge-tts, others -> macos-say)
+  --tts-voice <voice>     Override scenario.narration.voice. Examples:
+                         zh-CN-YunyangNeural, Samantha, zh_female_jitangmei_uranus_bigtts
   --allow-production     Confirm you have written authorization to record against
                          production data. Without this flag --data-mode production fails.
   --out <dir>            Output docs dir (default: docs/recordings)
@@ -239,9 +247,9 @@ Options:
     // 之前 --audiance customer 会被静默写入 args.audiance，然后按默认 audience=qa-proof 跑下去。
     if (!(key in DEFAULTS)) {
       throw new Error(
-        `无法识别参数：${token}（拼写或大小写有误？）。详见 --help。\n` +
+          `无法识别参数：${token}（拼写或大小写有误？）。详见 --help。\n` +
           `  当前支持：--root --name --language --subtitles --flows --base-url --audience ` +
-          `--polish --surface --data-mode --allow-production --out --force`
+          `--polish --surface --data-mode --tts-provider --tts-voice --allow-production --out --force`
       )
     }
 
@@ -320,6 +328,11 @@ Options:
       `--allow-production only makes sense with --data-mode production (got --data-mode ${args.dataMode}).`
     )
   }
+  if (!TTS_PROVIDERS.includes(args.ttsProvider)) {
+    throw new Error(
+      `--tts-provider must be one of: ${TTS_PROVIDERS.join(", ")} (received: ${args.ttsProvider})`
+    )
+  }
 
   return args
 }
@@ -352,6 +365,64 @@ async function writeNew(filePath, content, force) {
 
   await mkdir(path.dirname(filePath), { recursive: true })
   await writeFile(filePath, content)
+}
+
+function resolveTtsEngine(args) {
+  if (args.ttsProvider !== "auto") return args.ttsProvider
+  return args.audience === "customer" ? "edge-tts" : "macos-say"
+}
+
+function defaultNarrationVoice(language, engine) {
+  if (engine === "doubao-tts-v3") return "zh_female_jitangmei_uranus_bigtts"
+  if (engine === "edge-tts") {
+    if (language === "en-US") return "en-US-GuyNeural"
+    if (language === "zh-TW") return "zh-TW-YunJheNeural"
+    return "zh-CN-YunyangNeural"
+  }
+  if (language === "zh-TW") return "Meijia"
+  return language === "en-US" ? "Samantha" : "Tingting"
+}
+
+function buildNarrationConfig(args) {
+  const engine = resolveTtsEngine(args)
+  const narration = {
+    // 正式交付及以上默认启用 TTS：与 SKILL.md "对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成" 对齐。
+    enabled: args.polish !== "quick-proof",
+    provider: args.ttsProvider,
+    engine,
+    language: args.language,
+    voice: args.ttsVoice || defaultNarrationVoice(args.language, engine),
+    rate: args.language === "en-US" ? 165 : 180,
+    mix: "replace",
+    timing: "auto",
+    padMode: "freeze",
+    padBufferMs: 300,
+    maxPaddingMs: 60000
+  }
+
+  if (engine === "edge-tts") {
+    return {
+      ...narration,
+      edgeRate: "+0%",
+      edgePitch: "+0Hz",
+      edgeVolume: "+0%"
+    }
+  }
+
+  if (engine === "doubao-tts-v3") {
+    return {
+      ...narration,
+      doubaoEndpoint: "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+      doubaoResourceId: "seed-tts-2.0",
+      doubaoModel: "seed-tts-2.0-expressive",
+      doubaoSampleRate: 24000,
+      doubaoBitRate: 128000,
+      doubaoSpeechRate: 0,
+      doubaoLoudnessRate: 20
+    }
+  }
+
+  return narration
 }
 
 function buildScenario(args, detection = null) {
@@ -511,27 +582,7 @@ function buildScenario(args, detection = null) {
       defaultCaptionPattern:
         args.audience === "customer" ? "客户价值 + 可控机制" : "操作目标 + 验收点"
     },
-    narration: {
-      // 正式交付及以上默认启用 TTS：与 SKILL.md "对正式 demo 默认生成 transcript/VTT，再用本地 TTS 合成" 对齐。
-      enabled: args.polish !== "quick-proof",
-      // customer audience 优先 edge-tts（联网）以追求自然语音；其他 audience 默认本机 macOS say，避免把内部 demo 文本送到第三方服务。
-      engine: args.audience === "customer" ? "edge-tts" : "macos-say",
-      language: args.language,
-      voice:
-        args.audience === "customer"
-          ? args.language === "en-US"
-            ? "en-US-GuyNeural"
-            : "zh-CN-YunyangNeural"
-          : args.language === "en-US"
-            ? "Samantha"
-            : "Tingting",
-      rate: args.language === "en-US" ? 165 : 180,
-      mix: "replace",
-      timing: "auto",
-      padMode: "freeze",
-      padBufferMs: 300,
-      maxPaddingMs: 60000
-    },
+    narration: buildNarrationConfig(args),
     style: styleByAudience[args.audience] || "qa-proof",
     viewport: activeSurface.viewport,
     recording: {
@@ -579,7 +630,9 @@ function buildScenario(args, detection = null) {
       rerecordOnFailure: args.polish === "customer-ready",
       transitionCover: {
         enabled: "auto",
-        durationMs: 1100,
+        durationMs: 2400,
+        fadeInMs: 180,
+        fadeOutMs: 380,
         style: "subtle-subcover",
         label: isZh ? "接下来" : "Next"
       }
@@ -945,6 +998,37 @@ If the gate is stored in \`localStorage\`, prefer building it into your \`auth.s
 如果 gate 状态存在 \`localStorage\` 里，**优先**把对应的 entry 写进 \`auth.storageState\` 的 \`origins[].localStorage\` 数组——比每次录制都点一遍要快。`
 }
 
+function buildTtsProviderNote(scenario, isEn) {
+  const narration = scenario.narration || {}
+  const provider = narration.provider || "auto"
+  const engine = narration.engine || "macos-say"
+  const voice = narration.voice || "(default)"
+
+  if (isEn) {
+    const common =
+      `> TTS provider: scaffold \`--tts-provider=${provider}\` resolved to \`engine=${engine}\`, \`voice=${voice}\`. ` +
+      "To switch provider or voice, re-run scaffold with `--tts-provider ... --tts-voice ...`, or edit `scenario.narration.engine` / `voice`."
+    if (engine === "doubao-tts-v3") {
+      return `${common}\n> \`doubao-tts-v3\` uses Volcengine/Doubao streaming TTS. Keep API keys out of scenario files, guides, runner scripts, and committed env files. Prefer a non-echoing shell prompt before running add-tts:\n\n\`\`\`bash\nprintf \"DOUBAO_TTS_API_KEY: \"\nstty -echo\ntrap 'stty echo' EXIT\nIFS= read -r DOUBAO_TTS_API_KEY\nstty echo\ntrap - EXIT\nprintf \"\\n\"\nexport DOUBAO_TTS_API_KEY\nnode <skill>/scripts/add-tts-narration.mjs --video ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.mp4 --report ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-report.json --out ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-narrated.mp4 --scenario ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.scenario.json\nunset DOUBAO_TTS_API_KEY\n\`\`\`\n\n> In CI, use a masked secret. Avoid \`--doubao-api-key\` on shared machines because command lines can be stored in shell history or process listings.`
+    }
+    if (engine === "edge-tts") {
+      return `${common}\n> \`edge-tts\` needs \`uvx\` and network access; it sends narration text to Microsoft Edge online TTS. For offline/private text, use \`--tts-provider macos-say\` or edit the scenario.`
+    }
+    return `${common}\n> \`${engine}\` uses local system speech on macOS. If the configured voice is missing, add-tts will try a locale-compatible fallback.`
+  }
+
+  const common =
+    `> TTS provider：脚手架 \`--tts-provider=${provider}\` 解析为 \`engine=${engine}\`、\`voice=${voice}\`。` +
+    "要换服务商或声音，可重新 scaffold 加 `--tts-provider ... --tts-voice ...`，或直接改 `scenario.narration.engine` / `voice`。"
+  if (engine === "doubao-tts-v3") {
+    return `${common}\n> \`doubao-tts-v3\` 使用火山/豆包流式 TTS。不要把 API key 写进 scenario、guide、runner 或会提交的 env 文件。推荐用不回显的 shell prompt 临时注入，再运行 add-tts：\n\n\`\`\`bash\nprintf \"DOUBAO_TTS_API_KEY: \"\nstty -echo\ntrap 'stty echo' EXIT\nIFS= read -r DOUBAO_TTS_API_KEY\nstty echo\ntrap - EXIT\nprintf \"\\n\"\nexport DOUBAO_TTS_API_KEY\nnode <skill>/scripts/add-tts-narration.mjs --video ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.mp4 --report ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-report.json --out ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}-narrated.mp4 --scenario ${scenario.outputs?.dir || "docs/recordings"}/${scenario.name}.scenario.json\nunset DOUBAO_TTS_API_KEY\n\`\`\`\n\n> CI 中使用 masked secret。共享机器上尽量不要用 \`--doubao-api-key\`，因为命令行可能进入 shell history 或进程列表。`
+  }
+  if (engine === "edge-tts") {
+    return `${common}\n> \`edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。涉及敏感内容或不能使用在线 TTS 时，改用 \`--tts-provider macos-say\` 或修改 scenario。`
+  }
+  return `${common}\n> \`${engine}\` 使用 macOS 本机语音；如果 voice 不存在，add-tts 会尝试按语言自动 fallback。`
+}
+
 function buildGuide(args, scenario, scenarioPath, scriptPath) {
   const videoSize = scenario.recording?.videoSize || scenario.viewport || { width: 1440, height: 960 }
   const coverSize = scenario.cover || { width: 1280, height: 720 }
@@ -986,9 +1070,10 @@ function buildGuide(args, scenario, scenarioPath, scriptPath) {
 
   const dataMode = scenario.data?.mode || args.dataMode
   const dataModeSection = buildDataModeSection(dataMode, scenario, isEn)
+  const ttsProviderNote = buildTtsProviderNote(scenario, isEn)
 
   if (isEn) return buildGuideEn(args, scenario, scenarioPath, scriptPath, {
-    videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint, dataMode, dataModeSection
+    videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint, dataMode, dataModeSection, ttsProviderNote
   })
 
   return `# 录屏说明
@@ -1068,17 +1153,17 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 
 > \`--scenario\` 让脚本从 \`${scenarioPath}\` 读取 \`narration.engine\` / \`voice\` / \`rate\` / \`padMode\` / \`padBufferMs\` 等偏好（本场景默认 \`engine=${scenario.narration.engine}\`、\`voice=${scenario.narration.voice}\`）。要换 engine/voice 时直接改 scenario，不必每次重写命令。CLI 显式 \`--engine\` / \`--voice\` 仍可临时覆盖。
 > \`--pad-mode freeze\`（默认）会在某段 TTS 超过窗口长度时，自动在那段 cue 末尾插入冻结帧让配音读完，并把后续 cue 时间轴整体后移。生成的 narration-report 里有 \`timeline.totalPaddingMs\` 和每段的 \`paddingMs\` 可供查证。如果某段 padding 超过 \`--max-padding-ms\`（默认 60000）会 fail-fast，请缩短该段文案。
-> \`engine=edge-tts\` 需要 \`uvx\` 和网络，会把解说文本发送到 Microsoft Edge online TTS。不能使用在线 TTS 时，把 \`scenario.narration.engine\` 改成 \`macos-say\`、voice 改成 \`Tingting\` 即可。
+${ttsProviderNote}
 
 ## 多段合并与段间子封面
 
 如果最终视频由多段 MP4 拼成，先逐段录制、逐段审片、逐段加 TTS，然后用下面命令合并。只有传入 2 段及以上时才会自动插入段间子封面；只有 1 段时脚本会直接复制输出，不增加中间转场。
 
 \`\`\`bash
-node <skill>/scripts/assemble-segmented-video.mjs --out ${args.out}/${args.name}-assembled.mp4 --segment ${args.out}/${args.name}-narrated.mp4 --segment-title "${coverTitle}" --segment-report ${args.out}/${args.name}-report.json --combined-report ${args.out}/${args.name}-assembled-report.json --transition-duration-ms ${scenario.segmentation.transitionCover.durationMs}
+node <skill>/scripts/assemble-segmented-video.mjs --out ${args.out}/${args.name}-assembled.mp4 --segment ${args.out}/${args.name}-narrated.mp4 --segment-title "${coverTitle}" --segment-report ${args.out}/${args.name}-report.json --combined-report ${args.out}/${args.name}-assembled-report.json --transition-duration-ms ${scenario.segmentation.transitionCover.durationMs} --transition-fade-in-ms ${scenario.segmentation.transitionCover.fadeInMs} --transition-fade-out-ms ${scenario.segmentation.transitionCover.fadeOutMs}
 \`\`\`
 
-多段时为每个 segment 重复追加 \`--segment <mp4> --segment-title "下一段标题" --segment-report <json>\`。段间子封面会沿用主封面的色彩、字体和真实录屏抽帧，但强度更低，只显示 \`${scenario.segmentation.transitionCover.label}\`、下一段标题和短提示，默认约 1.1 秒；它是同一条 walkthrough 内的转场，不是新的片头。
+多段时为每个 segment 重复追加 \`--segment <mp4> --segment-title "下一段标题" --segment-report <json>\`。段间子封面会沿用主封面的色彩、字体和真实录屏抽帧，但强度更低，只显示 \`${scenario.segmentation.transitionCover.label}\`、下一段标题和短提示，默认约 2.4 秒，并带短淡入和柔和淡出；它是同一条 walkthrough 内的转场，不是新的片头。
 
 ## 生成封面
 
@@ -1154,7 +1239,7 @@ ${isPortrait ? "- 竖屏手机视频的字幕使用底部安全区，但必须�
 }
 
 function buildGuideEn(args, scenario, scenarioPath, scriptPath, ctx) {
-  const { videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint, dataMode, dataModeSection } = ctx
+  const { videoSize, coverSize, isPortrait, surfaceText, coverRatioText, coverTitle, coverSubtitle, backupHint, dataMode, dataModeSection, ttsProviderNote } = ctx
   return `# Recording Guide
 
 ## Overview
@@ -1232,17 +1317,17 @@ node <skill>/scripts/add-tts-narration.mjs --video ${args.out}/${args.name}.mp4 
 
 > \`--scenario\` makes the script read \`narration.engine\` / \`voice\` / \`rate\` / \`padMode\` / \`padBufferMs\` from \`${scenarioPath}\` (this scenario defaults to \`engine=${scenario.narration.engine}\`, \`voice=${scenario.narration.voice}\`). Change the engine or voice by editing the scenario; you don't need to rewrite the command every time. Explicit CLI flags (e.g. \`--engine\`, \`--voice\`) still override.
 > \`--pad-mode freeze\` (default) inserts cloned freeze frames at the end of any cue whose TTS audio is longer than its display window, and shifts subsequent cues. The narration-report exposes \`timeline.totalPaddingMs\` and per-cue \`paddingMs\`. A cue that needs more than \`--max-padding-ms\` (default 60000) fails fast; shorten that cue's text.
-> \`engine=edge-tts\` needs \`uvx\` and network access; it sends the text to Microsoft Edge online TTS. Offline? Set \`scenario.narration.engine\` to \`macos-say\` and \`voice\` to \`Tingting\` (or any voice from \`say -v ?\`).
+${ttsProviderNote}
 
 ## Assemble Segments And In-Video Transition Covers
 
 If the final video is assembled from multiple MP4 segments, record, review, and narrate each segment first, then merge them with this command. The script only inserts in-between transition covers when it receives 2+ segments; with a single segment it copies the video through without adding a middle slate.
 
 \`\`\`bash
-node <skill>/scripts/assemble-segmented-video.mjs --out ${args.out}/${args.name}-assembled.mp4 --segment ${args.out}/${args.name}-narrated.mp4 --segment-title "${coverTitle}" --segment-report ${args.out}/${args.name}-report.json --combined-report ${args.out}/${args.name}-assembled-report.json --transition-duration-ms ${scenario.segmentation.transitionCover.durationMs}
+node <skill>/scripts/assemble-segmented-video.mjs --out ${args.out}/${args.name}-assembled.mp4 --segment ${args.out}/${args.name}-narrated.mp4 --segment-title "${coverTitle}" --segment-report ${args.out}/${args.name}-report.json --combined-report ${args.out}/${args.name}-assembled-report.json --transition-duration-ms ${scenario.segmentation.transitionCover.durationMs} --transition-fade-in-ms ${scenario.segmentation.transitionCover.fadeInMs} --transition-fade-out-ms ${scenario.segmentation.transitionCover.fadeOutMs}
 \`\`\`
 
-For multiple segments, repeat \`--segment <mp4> --segment-title "Next segment title" --segment-report <json>\` in playback order. The transition cover reuses the main cover's color, type, and real recording frames, but stays lower-intensity: it shows \`${scenario.segmentation.transitionCover.label}\`, the next segment title, and one short line for about 1.1s. Treat it as a handoff inside one walkthrough, not a second intro.
+For multiple segments, repeat \`--segment <mp4> --segment-title "Next segment title" --segment-report <json>\` in playback order. The transition cover reuses the main cover's color, type, and real recording frames, but stays lower-intensity: it shows \`${scenario.segmentation.transitionCover.label}\`, the next segment title, and one short line for about 2.4s with a short fade-in and softer fade-out. Treat it as a handoff inside one walkthrough, not a second intro.
 
 ## Generate Cover
 

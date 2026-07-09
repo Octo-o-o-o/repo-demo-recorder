@@ -247,8 +247,26 @@ async function checkScaffoldSmoke() {
     if (scenario.segmentation?.transitionCover?.enabled !== "auto") {
       fail("Scaffold should emit segmentation.transitionCover.enabled=auto for formal/customer recordings")
     }
+    if (scenario.segmentation?.transitionCover?.durationMs !== 2400) {
+      fail(`Scaffold transition cover duration should default to 2400ms, got ${scenario.segmentation?.transitionCover?.durationMs}`)
+    }
+    if (
+      scenario.segmentation?.transitionCover?.fadeInMs !== 180 ||
+      scenario.segmentation?.transitionCover?.fadeOutMs !== 380
+    ) {
+      fail(
+        `Scaffold transition cover fade defaults should be 180/380ms, got ${scenario.segmentation?.transitionCover?.fadeInMs}/${scenario.segmentation?.transitionCover?.fadeOutMs}`
+      )
+    }
     if (scenario.outputs?.segmentTransitionCovers !== true) {
       fail("Scaffold should enable segment transition cover artifacts for formal/customer recordings")
+    }
+    const guide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!/--transition-duration-ms 2400/.test(guide)) {
+      fail("RECORDING_GUIDE assemble command should use the 2400ms transition cover default")
+    }
+    if (!/--transition-fade-in-ms 180/.test(guide) || !/--transition-fade-out-ms 380/.test(guide)) {
+      fail("RECORDING_GUIDE assemble command should include transition fade defaults")
     }
     // 死字段 server.port 已被移除（runner 只用 baseUrl）
     if (Object.prototype.hasOwnProperty.call(scenario.server || {}, "port")) {
@@ -956,6 +974,9 @@ async function checkTtsScenarioSmoke() {
     if (scenario.narration?.engine !== "edge-tts") {
       fail(`customer audience scenario.narration.engine 应为 edge-tts，得到 ${scenario.narration?.engine}`)
     }
+    if (scenario.narration?.provider !== "auto") {
+      fail(`默认 customer scenario.narration.provider 应为 auto，得到 ${scenario.narration?.provider}`)
+    }
     if (scenario.narration?.voice !== "zh-CN-YunyangNeural") {
       fail(`customer + zh-CN scenario.narration.voice 应为 zh-CN-YunyangNeural，得到 ${scenario.narration?.voice}`)
     }
@@ -978,6 +999,96 @@ async function checkTtsScenarioSmoke() {
     }
     if (!/--scenario/.test(helpResult.stdout)) {
       fail("add-tts-narration --help 必须列出 --scenario")
+    }
+    if (!/doubao-tts-v3/.test(helpResult.stdout) || !/DOUBAO_TTS_API_KEY/.test(helpResult.stdout)) {
+      fail("add-tts-narration --help 必须列出 doubao-tts-v3 和 DOUBAO_TTS_API_KEY 配置提示")
+    }
+    if (!/shell history|process listings/.test(helpResult.stdout)) {
+      fail("add-tts-narration --help 必须提醒 --doubao-api-key 在共享机器上的历史记录/进程列表风险")
+    }
+    const scaffoldHelp = spawnSync(
+      "node",
+      ["scripts/scaffold-repo-demo.mjs", "--help"],
+      { cwd: repoRoot, encoding: "utf8" }
+    )
+    if (scaffoldHelp.status !== 0 || !/--tts-voice/.test(scaffoldHelp.stdout)) {
+      fail("scaffold-repo-demo --help 必须列出 --tts-voice，允许用户在 scaffold 阶段选择声音")
+    }
+
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "tts-zh-tw",
+      "--data-mode", "mock",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--language", "zh-TW",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--force"
+    ])
+    const zhTwScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/tts-zh-tw.scenario.json"), "utf8"))
+    if (zhTwScenario.narration?.voice !== "zh-TW-YunJheNeural") {
+      fail(`customer + zh-TW scenario.narration.voice 应为 zh-TW-YunJheNeural，得到 ${zhTwScenario.narration?.voice}`)
+    }
+
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "tts-custom-voice",
+      "--data-mode", "mock",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--language", "zh-CN",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--tts-provider", "edge-tts",
+      "--tts-voice", "zh-CN-XiaoxiaoNeural",
+      "--force"
+    ])
+    const customVoiceScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/tts-custom-voice.scenario.json"), "utf8"))
+    if (customVoiceScenario.narration?.voice !== "zh-CN-XiaoxiaoNeural") {
+      fail(`--tts-voice 应写入 scenario.narration.voice，得到 ${customVoiceScenario.narration?.voice}`)
+    }
+
+    run("node", [
+      "scripts/scaffold-repo-demo.mjs",
+      "--root", tempRoot,
+      "--name", "tts-doubao",
+      "--data-mode", "mock",
+      "--audience", "customer",
+      "--polish", "customer-ready",
+      "--language", "zh-CN",
+      "--flows", "core",
+      "--base-url", "http://127.0.0.1:3000",
+      "--tts-provider", "doubao-tts-v3",
+      "--force"
+    ])
+    const doubaoScenario = JSON.parse(await readFile(path.join(tempRoot, "docs/recordings/tts-doubao.scenario.json"), "utf8"))
+    if (doubaoScenario.narration?.provider !== "doubao-tts-v3") {
+      fail(`--tts-provider doubao-tts-v3 应写入 narration.provider，得到 ${doubaoScenario.narration?.provider}`)
+    }
+    if (doubaoScenario.narration?.engine !== "doubao-tts-v3") {
+      fail(`--tts-provider doubao-tts-v3 应写入 narration.engine，得到 ${doubaoScenario.narration?.engine}`)
+    }
+    if (doubaoScenario.narration?.voice !== "zh_female_jitangmei_uranus_bigtts") {
+      fail(`Doubao 默认 voice 应为 zh_female_jitangmei_uranus_bigtts，得到 ${doubaoScenario.narration?.voice}`)
+    }
+    if (doubaoScenario.narration?.doubaoModel !== "seed-tts-2.0-expressive") {
+      fail(`Doubao 默认 model 应为 seed-tts-2.0-expressive，得到 ${doubaoScenario.narration?.doubaoModel}`)
+    }
+    if (Object.prototype.hasOwnProperty.call(doubaoScenario.narration || {}, "doubaoApiKey")) {
+      fail("Doubao scenario 不应写入 doubaoApiKey；凭据只能来自 env 或 CLI")
+    }
+    const doubaoGuide = await readFile(path.join(tempRoot, "docs/recordings/RECORDING_GUIDE.md"), "utf8")
+    if (!/DOUBAO_TTS_API_KEY|VOLCENGINE_TTS_API_KEY/.test(doubaoGuide)) {
+      fail("Doubao RECORDING_GUIDE 必须提示通过环境变量提供 API key")
+    }
+    if (!/stty -echo/.test(doubaoGuide) || !/unset DOUBAO_TTS_API_KEY/.test(doubaoGuide)) {
+      fail("Doubao RECORDING_GUIDE 必须提供不回显读取 key 并在合成后 unset 的安全步骤")
+    }
+    if (/DOUBAO_TTS_API_KEY=\.\.\./.test(doubaoGuide)) {
+      fail("Doubao RECORDING_GUIDE 不应建议把 API key 直接写进命令行示例")
     }
   } finally {
     await rm(tempRoot, { recursive: true, force: true })
