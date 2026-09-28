@@ -1953,6 +1953,8 @@ async function checkWorktreeRejectsUnsafeRelativePaths() {
   }
 }
 
+run(process.execPath, ["--test", "scripts/tests/doubao-transport.test.mjs"])
+
 await checkRequiredFiles()
 await checkSkillFrontmatter()
 await checkRepositoryIgnoreRules()

@@ -54,7 +54,7 @@ node scripts/check-skill.mjs
 - 目标 Web 项目中可用 Playwright，或者目标项目允许安装/运行 Playwright
 - 可选：macOS `say`，用于本地离线 TTS
 - 可选：`uvx` + `edge-tts`，用于质量更好的在线 TTS
-- 可选：火山/豆包 TTS v3 key（运行时临时放 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY`），用于豆包在线语音合成；不要写进 scenario、文档、runner 或会提交的 env 文件
+- 可选：目标项目安装 `ws`（支持鉴权 headers；Node 内置 WebSocket 不适用），以及火山/豆包 TTS v3 key（运行时临时放 `DOUBAO_TTS_API_KEY` 或 `VOLCENGINE_TTS_API_KEY`），用于豆包在线语音合成；不要写进 scenario、文档、runner 或会提交的 env 文件
 - 可选：Playwright，用于封面渲染；缺失时 `generate-video-cover.mjs` 会退化到 ffmpeg drawtext 或抽帧方案
 
 如果 fallback 封面文字需要更好的字体，可设置：
