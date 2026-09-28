@@ -4,7 +4,7 @@
 // 然后 git worktree remove 让仓库回到干净状态。配合 prepare-recording-worktree.mjs 使用。
 
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync } from "node:fs"
+import { existsSync, lstatSync, realpathSync } from "node:fs"
 import { cp, mkdir, readFile, readdir, rm, rmdir, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 
@@ -231,9 +231,25 @@ async function main() {
   if (!existsSync(mainPath)) {
     throw new Error(`元数据里的主工作树路径已不存在：${mainPath}`)
   }
+  // 防串档：元数据若是从别的 worktree 拷贝来的，mainPath 可能指向错误主仓库，
+  // 产物会拷去错误的地方。metadata.worktreePath 必须与 --worktree 指向同一目录。
+  const realpathOrSelf = (p) => {
+    try { return realpathSync(p) } catch { return path.resolve(p) }
+  }
+  if (metadata.worktreePath && realpathOrSelf(metadata.worktreePath) !== realpathOrSelf(worktreePath)) {
+    throw new Error(
+      `元数据中的 worktreePath（${metadata.worktreePath}）与 --worktree（${worktreePath}）不一致。\n` +
+        `元数据可能被复制/移动过；请确认后手动清理，避免把产物拷回错误的主工作树。`
+    )
+  }
 
+  const worktreeReal = realpathOrSelf(worktreePath)
   const worktreeList = gitOk(mainPath, ["worktree", "list", "--porcelain"])
-  if (!worktreeList.split(/\r?\n/).some((line) => line.startsWith(`worktree ${worktreePath}`))) {
+  const listed = worktreeList.split(/\r?\n/).some((line) => {
+    if (!line.startsWith("worktree ")) return false
+    return realpathOrSelf(line.slice("worktree ".length).trim()) === worktreeReal
+  })
+  if (!listed) {
     throw new Error(
       `git worktree list 中没有 ${worktreePath}。\n` +
         `可能 worktree 已被外部命令移除，或 metadata 中的 worktreePath 与实际不一致。`

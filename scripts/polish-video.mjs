@@ -287,6 +287,13 @@ async function polishGif(args) {
 const args = parseArgs(process.argv.slice(2))
 const startedAt = new Date().toISOString()
 
+for (const tool of ["ffmpeg", "ffprobe"]) {
+  if (spawnSync(tool, ["-version"], { stdio: "ignore" }).error) {
+    console.error(`需要 ${tool} 才能做后期导出：请先安装（macOS: brew install ffmpeg），再重跑本命令`)
+    process.exit(1)
+  }
+}
+
 if (args.format === "gif") {
   await polishGif(args)
 } else {

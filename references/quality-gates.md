@@ -60,7 +60,7 @@
 
 - 先尝试 `npm run build`。
 - 录制时固定 `127.0.0.1`。
-- 必要时运行 skill 的 `scripts/ensure-next-dev-manifests.mjs` 类似辅助脚本，持续补齐 dev manifest。
+- 必要时在目标项目里写一个临时辅助脚本（轮询并补齐缺失的 dev manifest 文件）；本 skill 不内置该脚本，录制结束后删除临时脚本。
 
 ### 字幕遮挡控件
 

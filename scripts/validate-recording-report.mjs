@@ -15,6 +15,8 @@ Options:
   --narration-report <path>         Narration timing report
   --require-audio                   Require a non-silent audio stream
   --require-cover-art               Require an MP4 attached_pic cover stream
+  --min-audio-max-db <db>           Fail if audio max_volume is below this dB (default -50;
+                                    customer-ready delivery should pass -18 or higher)
   --expect-width <px>               Expected video width
   --expect-height <px>              Expected video height
   --allow-response <text>           Allow matching response error text
