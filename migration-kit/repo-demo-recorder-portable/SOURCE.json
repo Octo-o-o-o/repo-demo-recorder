@@ -1,0 +1,10 @@
+{
+  "created": "2026-10-09",
+  "repository": "https://github.com/Octo-o-o-o/repo-demo-recorder.git",
+  "base_commit": "d00cfe8929ac5e27e573739fb17a6f6da56d875a",
+  "snapshot": "current working files, includes pre-existing uncommitted edits",
+  "modified_source_files": [
+    "scripts/add-tts-narration.mjs"
+  ],
+  "secrets_included": false
+}

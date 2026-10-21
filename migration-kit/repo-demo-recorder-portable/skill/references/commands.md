@@ -1,0 +1,308 @@
+# 常用命令参考
+
+`<skill>` 指 skill 安装路径（如 `~/.codex/skills/repo-demo-recorder` 或 `~/.claude/skills/repo-demo-recorder`）。在目标项目根目录执行。完整参数用 `--help` 查看。
+
+## 0. 准备录制 worktree（推荐）
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name add-data-flow
+```
+
+输出最后一行是 JSON（含 `worktreePath`、`linkedPaths`、`gitExclude` 等），按提示 `cd <worktreePath>` 之后所有命令的 `--root` 改成 `.` 即可。
+
+主工作树有未提交改动时，默认只警告不阻断。需要把改动一并带进 worktree：
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name add-data-flow \
+  --include-uncommitted
+```
+
+prepare 默认会软链 `node_modules` / `.env` / `.env.local` / `.env.development*` / `.env.test*`，并默认跳过 `.env.production*`。生产录制必须先确认授权，再显式 `--link .env.production.local`。要追加其它路径（例如 framework cache）：
+
+```bash
+node <skill>/scripts/prepare-recording-worktree.mjs \
+  --root . \
+  --name add-data-flow \
+  --link .next \
+  --link .vite
+```
+
+录完后回收：
+
+```bash
+node <skill>/scripts/cleanup-recording-worktree.mjs --worktree <worktreePath>
+```
+
+默认拷回 `docs/recordings/` 和 `scripts/recordings/`。如果 scaffold 时用 `scaffold-repo-demo.mjs --out` 改过产物目录，cleanup 时补 `--copy <relPath>` 指向那个目录：
+
+```bash
+node <skill>/scripts/cleanup-recording-worktree.mjs \
+  --worktree <worktreePath> \
+  --copy docs/customer-demos \
+  --copy-mode overwrite
+```
+
+`--keep` 留住 worktree 调试；调好后再不带 `--keep` 跑一次正式收尾。
+
+## 1. 生成场景骨架
+
+先显式选择数据来源：本地安全演示用 `--data-mode mock`，staging 演示账号用 `--data-mode staging`，真实生产数据必须同时加 `--data-mode production --allow-production`。
+
+桌面端通用走查：
+
+```bash
+node <skill>/scripts/scaffold-repo-demo.mjs \
+  --root . \
+  --name add-data-flow \
+  --data-mode mock \
+  --language zh-CN \
+  --subtitles open \
+  --flows core,add-data
+```
+
+移动端竖屏客户演示：
+
+```bash
+node <skill>/scripts/scaffold-repo-demo.mjs \
+  --root . \
+  --name mobile-demo \
+  --surface mobile \
+  --language zh-CN \
+  --subtitles both \
+  --data-mode mock \
+  --flows mobile \
+  --audience customer \
+  --polish customer-ready
+```
+
+scaffold 会自动从 `package.json` / `tauri.conf.json` / `vite.config.*` / `next.config.*` 探测 baseUrl 与 dev command；可用 `--base-url` 覆盖。
+
+## 2. 录制
+
+```bash
+node scripts/recordings/<name>.mjs
+```
+
+runner 自动起 dev server（`server.command`）、按 `flow.steps` 操作浏览器、收集 caption/step/console/pageError/response 进 report。
+
+## 3. 加 TTS 解说
+
+```bash
+node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/add-data-flow.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --scenario docs/recordings/add-data-flow.scenario.json
+```
+
+推荐让 `--scenario` 读取 `scenario.narration.provider` / `engine` / `voice`。生成 scenario 时可用 `--tts-provider auto|macos-say|local-system|edge-tts|doubao-tts-v3` 选择合成提供商，用 `--tts-voice <voice>` 指定声音；CLI 显式 `--engine` / `--voice` 只用于临时覆盖。
+
+Edge 在线中文示例：
+
+```bash
+node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/add-data-flow.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --engine edge-tts \
+  --voice zh-CN-YunyangNeural
+```
+
+豆包/火山 TTS v3 示例（key 只临时放环境变量，不写入命令历史、scenario 或文档）：
+
+```bash
+printf "DOUBAO_TTS_API_KEY: "
+stty -echo
+trap 'stty echo' EXIT
+IFS= read -r DOUBAO_TTS_API_KEY
+stty echo
+trap - EXIT
+printf "\n"
+export DOUBAO_TTS_API_KEY
+
+node <skill>/scripts/add-tts-narration.mjs \
+  --video docs/recordings/add-data-flow.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --engine doubao-tts-v3 \
+  --voice zh_female_jitangmei_uranus_bigtts
+
+unset DOUBAO_TTS_API_KEY
+```
+
+`edge-tts` 和 `doubao-tts-v3` 都需要网络，并会把解说文本发送到对应在线 TTS 服务。离线或文本敏感时改 `--engine macos-say`，voice 不存在会自动 fallback。共享机器上尽量不要用 `--doubao-api-key`，因为命令行可能进入 shell history 或进程列表。
+
+## 4. 多段合并与段间子封面
+
+如果最终视频由多段录制片段组成，先逐段录制、逐段审片、逐段加 TTS，然后合并。只有 2 段及以上时会插入低强度段间子封面；只有 1 段时脚本会直接复制输出，不加中间转场。
+
+```bash
+node <skill>/scripts/assemble-segmented-video.mjs \
+  --out docs/recordings/full-walkthrough-narrated.mp4 \
+  --segment docs/recordings/core-narrated.mp4 \
+  --segment-title "核心浏览路径" \
+  --segment-report docs/recordings/core-report.json \
+  --segment docs/recordings/add-data-narrated.mp4 \
+  --segment-title "新增数据流程" \
+  --segment-report docs/recordings/add-data-report.json \
+  --transition-duration-ms 2400 \
+  --transition-fade-in-ms 180 \
+  --transition-fade-out-ms 380 \
+  --report docs/recordings/full-walkthrough-assemble-report.json \
+  --combined-report docs/recordings/full-walkthrough-report.json
+```
+
+子封面会使用下一段视频的真实抽帧作为背景，并沿用主封面的色彩/字体，但只显示「接下来」、下一段标题和一句短提示，视觉层级低于片头主封面。客户可发版默认停留约 2.4 秒，并使用短淡入与柔和淡出；中文标题或章节说明较长时可以继续加长。合并后的 `full-walkthrough-report.json` 会把原分段 report 的时间轴整体平移，并把子封面写成 `kind: "transition"`、`narration: false` 的 cue，便于 frame review 抽帧检查。
+
+## 5. 生成封面（含候选 contact sheet）
+
+桌面 16:9：
+
+```bash
+node <skill>/scripts/generate-video-cover.mjs \
+  --video docs/recordings/add-data-flow-narrated.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --out docs/recordings/add-data-flow-cover.png \
+  --title "产品演示" \
+  --subtitle "面向客户的可发版走查" \
+  --candidates-dir docs/recordings/add-data-flow-cover-candidates
+```
+
+移动 9:16：
+
+```bash
+node <skill>/scripts/generate-video-cover.mjs \
+  --video docs/recordings/mobile-demo-narrated.mp4 \
+  --report docs/recordings/mobile-demo-report.json \
+  --out docs/recordings/mobile-demo-cover.png \
+  --width 1080 \
+  --height 1920 \
+  --theme mobile \
+  --candidates-dir docs/recordings/mobile-demo-cover-candidates
+```
+
+Playwright 不可用时自动退化到 ffmpeg drawtext 或纯抽帧（详见 README）。
+
+## 6. 嵌入封面 + 删空白
+
+```bash
+node <skill>/scripts/embed-video-cover.mjs \
+  --video docs/recordings/add-data-flow-narrated.mp4 \
+  --cover docs/recordings/add-data-flow-cover.png \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --intro-duration-ms 2000 \
+  --narration-report docs/recordings/add-data-flow-narrated-narration-report.json \
+  --narration-vtt docs/recordings/add-data-flow-narrated-narration.vtt \
+  --report docs/recordings/add-data-flow-cover-embed-report.json
+```
+
+```bash
+node <skill>/scripts/trim-video-gap.mjs \
+  --video docs/recordings/add-data-flow-narrated.mp4 \
+  --cover docs/recordings/add-data-flow-cover.png \
+  --out docs/recordings/add-data-flow-narrated.mp4 \
+  --remove-start-ms 2000 \
+  --remove-end-ms 8500 \
+  --narration-report docs/recordings/add-data-flow-narrated-narration-report.json \
+  --narration-vtt docs/recordings/add-data-flow-narrated-narration.vtt \
+  --report docs/recordings/add-data-flow-gap-trim-report.json
+```
+
+## 7. 质量门禁 + 审片页
+
+```bash
+node <skill>/scripts/validate-recording-report.mjs \
+  docs/recordings/add-data-flow-report.json \
+  --video docs/recordings/add-data-flow-narrated.mp4 \
+  --source-video docs/recordings/add-data-flow.mp4 \
+  --narration-report docs/recordings/add-data-flow-narrated-narration-report.json \
+  --require-audio \
+  --require-cover-art \
+  --min-audio-max-db -18 \
+  --expect-width 1440 \
+  --expect-height 960 \
+  --write-media-report docs/recordings/add-data-flow-media-report.json \
+  --write-frame-review docs/recordings/add-data-flow-frame-review
+```
+
+`qualityGates.allowedResponseErrors / allowedConsoleErrors / allowPageErrors / requireApiSuccess / requireDbAssertions` 会自动从 report 中读取，不需要再传 CLI flag。
+
+```bash
+node <skill>/scripts/generate-review-page.mjs \
+  --report docs/recordings/add-data-flow-report.json \
+  --video docs/recordings/add-data-flow-narrated.mp4 \
+  --media-report docs/recordings/add-data-flow-media-report.json \
+  --cover docs/recordings/add-data-flow-cover.png \
+  --cover-candidates docs/recordings/add-data-flow-cover-candidates \
+  --frame-review docs/recordings/add-data-flow-frame-review \
+  --out docs/recordings/add-data-flow-review.html
+```
+
+如果 TTS freeze padding、trim 或后期变速改变了时间轴，frame review 要用最终时间轴。最终视频做过 1.035x 加速时示例：
+
+```bash
+node <skill>/scripts/validate-recording-report.mjs \
+  docs/recordings/full-walkthrough-report.json \
+  --video docs/recordings/full-walkthrough-final.mp4 \
+  --source-video docs/recordings/full-walkthrough-source.mp4 \
+  --narration-report docs/recordings/full-walkthrough-narration-report.json \
+  --require-audio \
+  --require-cover-art \
+  --min-audio-max-db -18 \
+  --expect-width 1440 \
+  --expect-height 960 \
+  --write-media-report docs/recordings/full-walkthrough-media-report.json \
+  --write-frame-review docs/recordings/full-walkthrough-frame-review \
+  --frame-review-time-scale 1.035
+```
+
+客户可发版建议额外做整片 contact sheet 和黑屏检测：
+
+```bash
+mkdir -p docs/recordings/full-walkthrough-qa
+
+ffmpeg -y -i docs/recordings/full-walkthrough-final.mp4 \
+  -map 0:v:0 \
+  -vf "fps=1/60,scale=288:-1,tile=4x4:padding=8:margin=8:color=white" \
+  -frames:v 1 -update 1 \
+  docs/recordings/full-walkthrough-qa/contact-sheet.png
+
+ffmpeg -hide_banner -nostats \
+  -i docs/recordings/full-walkthrough-final.mp4 \
+  -vf blackdetect=d=1:pix_th=0.02 \
+  -an -f null - 2>&1 | tee docs/recordings/full-walkthrough-qa/blackdetect.log
+```
+
+抽查片头、转场和尾段：
+
+```bash
+ffmpeg -y -ss 00:00:00.500 -i docs/recordings/full-walkthrough-final.mp4 \
+  -map 0:v:0 -frames:v 1 -update 1 docs/recordings/full-walkthrough-qa/opening.png
+
+ffmpeg -y -ss 00:00:59.200 -i docs/recordings/full-walkthrough-final.mp4 \
+  -map 0:v:0 -frames:v 1 -update 1 docs/recordings/full-walkthrough-qa/transition.png
+```
+
+## 8. 包装 / Screen Studio 交接
+
+```bash
+node <skill>/scripts/polish-video.mjs \
+  --video docs/recordings/add-data-flow-narrated.mp4 \
+  --out docs/recordings/add-data-flow-polished.mp4 \
+  --preset customer-desktop
+```
+
+```bash
+node <skill>/scripts/prepare-screen-studio-handoff.mjs \
+  --out docs/recordings/add-data-flow-screen-studio-handoff \
+  --target desktop \
+  --raw-video docs/recordings/add-data-flow.mp4 \
+  --narrated-video docs/recordings/add-data-flow-narrated.mp4 \
+  --report docs/recordings/add-data-flow-report.json \
+  --vtt docs/recordings/add-data-flow-narrated-narration.vtt \
+  --cover docs/recordings/add-data-flow-cover.png
+```

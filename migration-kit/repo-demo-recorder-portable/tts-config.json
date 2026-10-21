@@ -1,0 +1,14 @@
+{
+  "narration": {
+    "provider": "doubao-tts-v3",
+    "engine": "doubao-tts-v3",
+    "voice": "zh_female_jitangmei_uranus_bigtts",
+    "doubaoModel": "seed-tts-2.0-expressive",
+    "doubaoResourceId": "seed-tts-2.0",
+    "doubaoEndpoint": "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+  },
+  "fallback": {
+    "engine": "edge-tts",
+    "voice": "zh-CN-YunyangNeural"
+  }
+}

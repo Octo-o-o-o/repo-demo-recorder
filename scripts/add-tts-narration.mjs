@@ -894,6 +894,42 @@ async function synthesizeOneDoubaoCue(cue, args, tempDir, WsConstructor) {
   }
 }
 
+// 每次尝试的硬超时。豆包双向流式连接偶发会在握手或响应阶段静默停滞
+// （无 error、无 close），没有超时就会让整个流水线无限挂起。
+const DOUBAO_ATTEMPT_TIMEOUT_MS = Number(process.env.REPO_DEMO_TTS_ATTEMPT_TIMEOUT_MS || 90_000)
+
+async function synthesizeOneDoubaoCueWithTimeout(cue, args, tempDir, WsConstructor) {
+  let timer = null
+  let timedOutWs = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new Error(
+          `Doubao TTS cue ${cue.index} 超过 ${Math.round(DOUBAO_ATTEMPT_TIMEOUT_MS / 1000)}s 无响应（连接静默停滞）`
+        )
+      )
+      timedOutWs?.terminate?.()
+      timedOutWs?.close?.()
+    }, DOUBAO_ATTEMPT_TIMEOUT_MS)
+  })
+  // synthesizeOneDoubaoCue does `new WsConstructor(...)`, so hand it a
+  // constructable function (arrow functions cannot be `new`-ed) that also
+  // captures the socket for the timeout to terminate.
+  const CapturingWs = function (url, options) {
+    const ws = new WsConstructor(url, options)
+    timedOutWs = ws
+    return ws
+  }
+  try {
+    return await Promise.race([
+      synthesizeOneDoubaoCue(cue, args, tempDir, CapturingWs),
+      timeout,
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function synthesizeWithDoubaoTts(cues, args, tempDir) {
   const WsConstructor = loadWsConstructor()
   const files = []
@@ -902,7 +938,7 @@ async function synthesizeWithDoubaoTts(cues, args, tempDir) {
     let lastError = null
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        files.push(await synthesizeOneDoubaoCue(cue, args, tempDir, WsConstructor))
+        files.push(await synthesizeOneDoubaoCueWithTimeout(cue, args, tempDir, WsConstructor))
         lastError = null
         break
       } catch (error) {
@@ -1003,75 +1039,120 @@ function buildFastPathFilter(cues, hasOriginalAudio, args, silentInputIndex) {
   }
 
   parts.push(
-    `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=0[mix]`
+    `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=0:normalize=0[mix]`
   )
   return parts.join(";")
 }
 
-function buildPaddedFilter(cues, hasOriginalAudio, args, silentInputIndex, videoDurationMs) {
-  const parts = []
-  const videoSegments = []
-  const audioSegments = []
+/**
+ * Split the source timeline at every cue window start. Each returned segment
+ * carries the freeze padding that must be appended after it (0 for most).
+ */
+function buildPaddedSegments(cues, videoDurationMs) {
   const splitsMs = cues.map((cue) => cue.sourceWindowStartMs)
   splitsMs.push(videoDurationMs)
-
+  const segments = []
   let cursor = 0
   let cueIdx = 0
-  for (let i = 0; i < splitsMs.length; i += 1) {
-    const segmentEnd = splitsMs[i]
-    if (segmentEnd <= cursor) {
-      continue
-    }
-    const segLabel = `v${i}`
-    const trimEnd = segmentEnd >= videoDurationMs ? "" : `:end=${msToFfTime(segmentEnd)}`
-    parts.push(`[0:v]trim=start=${msToFfTime(cursor)}${trimEnd},setpts=PTS-STARTPTS[${segLabel}]`)
-
-    if (hasOriginalAudio && args.mix !== "replace") {
-      const aLabel = `a${i}`
-      parts.push(
-        `[0:a]${AUDIO_FORMAT},atrim=start=${msToFfTime(cursor)}${trimEnd ? `:end=${msToFfTime(segmentEnd)}` : ""},asetpts=PTS-STARTPTS[${aLabel}]`
-      )
-      audioSegments.push({ label: aLabel, padMs: 0 })
-    }
-
-    // 这一段对应 cueIdx 的窗口（如果在 cue 序列里）；最后一段是收尾，没有 padding
+  for (const segmentEnd of splitsMs) {
+    if (segmentEnd <= cursor) continue
     let segPadMs = 0
     if (cueIdx < cues.length && cues[cueIdx].sourceWindowStartMs === cursor) {
       segPadMs = cues[cueIdx].paddingMs
       cueIdx += 1
     }
-
-    if (segPadMs > 0) {
-      parts.push(
-        `[${segLabel}]tpad=stop_mode=clone:stop_duration=${msToFfTime(segPadMs)}[${segLabel}p]`
-      )
-      videoSegments.push(`[${segLabel}p]`)
-      if (audioSegments.length > 0) {
-        const last = audioSegments[audioSegments.length - 1]
-        last.padMs = segPadMs
-      }
-    } else {
-      videoSegments.push(`[${segLabel}]`)
-    }
-
+    segments.push({
+      startMs: cursor,
+      endMs: segmentEnd >= videoDurationMs ? null : segmentEnd,
+      padMs: segPadMs,
+    })
     cursor = segmentEnd
   }
+  return segments
+}
 
-  parts.push(`${videoSegments.join("")}concat=n=${videoSegments.length}:v=1:a=0[outv]`)
+/**
+ * Stage 1 of the padded pipeline: render the freeze-padded video (video-only,
+ * plus the sliced original audio when present) into an intermediate file.
+ *
+ * Historical note: this used to be a single filter_complex with one shared
+ * `[0:v]` fanned out into N parallel `trim` branches. Beyond ~2 minutes /
+ * ~15 cues that graph deadlocks in ffmpeg's inter-filter frame queues (the
+ * encoder stalls at a few fps and never finishes); a 41-input single-process
+ * variant deadlocked the same way. So this now runs one SMALL ffmpeg job per
+ * segment sequentially (input-level -ss/-to + optional tpad) and stitches the
+ * uniform pieces with the concat demuxer — slower to spawn, but robust.
+ */
+async function renderPaddedVideo({ videoPath, cues, args, videoDurationMs, hasOriginalAudio, paddedPath, tempDir }) {
+  const segments = buildPaddedSegments(cues, videoDurationMs)
+  const keepOriginalAudio = hasOriginalAudio && args.mix !== "replace"
+  const pieceDir = path.join(tempDir, "padded-pieces")
+  await mkdir(pieceDir, { recursive: true })
 
+  const piecePaths = []
+  for (const [index, segment] of segments.entries()) {
+    const piecePath = path.join(pieceDir, `piece-${String(index).padStart(3, "0")}.mp4`)
+    const pieceArgs = ["-y", "-nostdin", "-ss", msToFfTime(segment.startMs)]
+    if (segment.endMs !== null) pieceArgs.push("-to", msToFfTime(segment.endMs))
+    pieceArgs.push("-i", videoPath)
+    const vFilters = ["setpts=PTS-STARTPTS"]
+    if (segment.padMs > 0) {
+      vFilters.push(`tpad=stop_mode=clone:stop_duration=${msToFfTime(segment.padMs)}`)
+    }
+    pieceArgs.push("-filter:v", vFilters.join(","))
+    if (keepOriginalAudio) {
+      const aFilters = [AUDIO_FORMAT, "asetpts=PTS-STARTPTS"]
+      if (segment.padMs > 0) aFilters.push(`apad=pad_dur=${msToFfTime(segment.padMs)}`)
+      pieceArgs.push("-filter:a", aFilters.join(","), "-c:a", "aac", "-b:a", "192k")
+    } else {
+      pieceArgs.push("-an")
+    }
+    pieceArgs.push(
+      "-c:v",
+      args.videoCodec,
+      "-crf",
+      String(args.videoCrf),
+      "-preset",
+      args.videoPreset,
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      piecePath
+    )
+    await run("ffmpeg", pieceArgs)
+    piecePaths.push(piecePath)
+  }
+
+  const concatList = path.join(pieceDir, "concat.txt")
+  await writeFile(
+    concatList,
+    piecePaths.map((piece) => `file '${piece.replace(/'/g, "'\\''")}'`).join("\n") + "\n"
+  )
+  await run("ffmpeg", [
+    "-y",
+    "-nostdin",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    concatList,
+    "-c",
+    "copy",
+    "-movflags",
+    "+faststart",
+    paddedPath
+  ])
+  return { segments: segments.length }
+}
+
+function buildPaddedMixFilter(cues, hasOriginalAudio, args, silentInputIndex) {
+  const parts = []
   const mixInputs = []
   if (hasOriginalAudio && args.mix !== "replace") {
-    const concatLabels = audioSegments.map((seg) => {
-      if (seg.padMs > 0) {
-        const padded = `${seg.label}p`
-        parts.push(`[${seg.label}]apad=pad_dur=${msToFfTime(seg.padMs)}[${padded}]`)
-        return `[${padded}]`
-      }
-      return `[${seg.label}]`
-    })
-    parts.push(`${concatLabels.join("")}concat=n=${concatLabels.length}:v=0:a=1[orig]`)
     const ducked = args.mix === "duck" ? args.originalVolume : 1
-    parts.push(`[orig]volume=${ducked}[base]`)
+    parts.push(`[0:a]${AUDIO_FORMAT},volume=${ducked}[base]`)
     mixInputs.push("[base]")
   } else {
     parts.push(`[${silentInputIndex}:a]${AUDIO_FORMAT},volume=0[silent]`)
@@ -1089,7 +1170,7 @@ function buildPaddedFilter(cues, hasOriginalAudio, args, silentInputIndex, video
   }
 
   parts.push(
-    `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=0[mix]`
+    `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=0:normalize=0[mix]`
   )
   return parts.join(";")
 }
@@ -1102,11 +1183,26 @@ async function muxNarration({
   videoDurationMs,
   totalDurationMs,
   totalPaddingMs,
-  hasOriginalAudio
+  hasOriginalAudio,
+  tempDir
 }) {
   const totalSeconds = totalDurationMs / 1000
+  const usePaddedFilter = totalPaddingMs > 0
+
+  // Padded pipeline is two-pass: (1) render the freeze-padded video into an
+  // intermediate (segment-wise inputs, no shared-branch deadlock), then
+  // (2) mix narration over it with the cheap fast-path audio graph.
+  let mixSourcePath = videoPath
+  let mixSourceHasAudio = hasOriginalAudio
+  if (usePaddedFilter) {
+    const paddedPath = path.join(tempDir, "padded-video.mp4")
+    await renderPaddedVideo({ videoPath, cues, args, videoDurationMs, hasOriginalAudio, paddedPath, tempDir })
+    mixSourcePath = paddedPath
+    mixSourceHasAudio = hasOriginalAudio && args.mix !== "replace"
+  }
+
   const silentInputIndex = audioFiles.length + 1
-  const ffmpegArgs = ["-y", "-i", videoPath]
+  const ffmpegArgs = ["-y", "-nostdin", "-i", mixSourcePath]
   for (const audioFile of audioFiles) {
     ffmpegArgs.push("-i", audioFile)
   }
@@ -1119,32 +1215,15 @@ async function muxNarration({
     "anullsrc=channel_layout=stereo:sample_rate=44100"
   )
 
-  const usePaddedFilter = totalPaddingMs > 0
+  // The intermediate already carries the padded timeline (and the ducked /
+  // replaced original audio decision), so both paths reduce to the cheap
+  // audio-only mix graph over `mixSourcePath`.
   const filter = usePaddedFilter
-    ? buildPaddedFilter(cues, hasOriginalAudio, args, silentInputIndex, videoDurationMs)
-    : buildFastPathFilter(cues, hasOriginalAudio, args, silentInputIndex)
+    ? buildPaddedMixFilter(cues, mixSourceHasAudio, args, silentInputIndex)
+    : buildFastPathFilter(cues, mixSourceHasAudio, args, silentInputIndex)
 
   ffmpegArgs.push("-filter_complex", filter)
-
-  if (usePaddedFilter) {
-    ffmpegArgs.push(
-      "-map",
-      "[outv]",
-      "-map",
-      "[mix]",
-      "-c:v",
-      args.videoCodec,
-      "-crf",
-      String(args.videoCrf),
-      "-preset",
-      args.videoPreset,
-      "-pix_fmt",
-      "yuv420p"
-    )
-  } else {
-    ffmpegArgs.push("-map", "0:v:0", "-map", "[mix]", "-c:v", "copy")
-  }
-
+  ffmpegArgs.push("-map", "0:v:0", "-map", "[mix]", "-c:v", "copy")
   ffmpegArgs.push("-c:a", "aac", "-b:a", "160k", "-t", String(totalSeconds), args.out)
 
   await run("ffmpeg", ffmpegArgs)
@@ -1214,7 +1293,8 @@ try {
     videoDurationMs,
     totalDurationMs,
     totalPaddingMs,
-    hasOriginalAudio: audioProbe.streams?.length > 0
+    hasOriginalAudio: audioProbe.streams?.length > 0,
+    tempDir
   })
 
   const outputProbe = await ffprobeJson(outputPath, "a")
