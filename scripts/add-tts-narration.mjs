@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawn, spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { createRequire } from "node:module"
+import { loadWsConstructor, createDoubaoQueue, waitForWsOpen } from "./lib/doubao-transport.mjs"
 
 const DEFAULTS = {
   engine: "macos-say",
@@ -716,63 +716,6 @@ function debugDoubaoMessage(prefix, message) {
   )
 }
 
-function loadWsConstructor() {
-  try {
-    const projectRequire = createRequire(path.join(process.cwd(), "package.json"))
-    const wsModule = projectRequire("ws")
-    return wsModule.WebSocket || wsModule.default || wsModule
-  } catch (error) {
-    if (typeof WebSocket === "function") return WebSocket
-    throw new Error(
-      `doubao-tts-v3 需要可设置 headers 的 WebSocket 客户端。当前项目未能加载 ws 包：${error.message || error}`
-    )
-  }
-}
-
-function createDoubaoQueue(ws) {
-  const queue = []
-  const waiters = []
-  let closedError = null
-
-  const push = (value) => {
-    const waiter = waiters.shift()
-    if (waiter) waiter.resolve(value)
-    else queue.push(value)
-  }
-  const fail = (error) => {
-    closedError = error
-    while (waiters.length > 0) waiters.shift().reject(error)
-  }
-
-  ws.on?.("message", (data) => {
-    try {
-      push(decodeDoubaoMessage(data))
-    } catch (error) {
-      fail(error)
-    }
-  })
-  ws.on?.("error", fail)
-  ws.on?.("close", (code, reason) => {
-    if (!closedError) fail(new Error(`Doubao TTS WebSocket closed: ${code} ${reason || ""}`.trim()))
-  })
-
-  return {
-    next() {
-      if (queue.length > 0) return Promise.resolve(queue.shift())
-      if (closedError) return Promise.reject(closedError)
-      return new Promise((resolve, reject) => waiters.push({ resolve, reject }))
-    }
-  }
-}
-
-function waitForWsOpen(ws) {
-  if (ws.readyState === 1) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    ws.once?.("open", resolve)
-    ws.once?.("error", reject)
-  })
-}
-
 function sendDoubaoJson(ws, event, payload, sessionId = "") {
   const message = encodeDoubaoMessage({
     type: DOUBAO_MSG_TYPE.FullClientRequest,
@@ -808,8 +751,8 @@ async function synthesizeOneDoubaoCue(cue, args, tempDir, WsConstructor) {
     "X-Api-Connect-Id": connectId,
     "X-Control-Require-Usage-Tokens-Return": "*"
   }
-  const ws = new WsConstructor(args.doubaoEndpoint, { headers })
-  const queue = createDoubaoQueue(ws)
+  const ws = new WsConstructor(args.doubaoEndpoint, { headers, handshakeTimeout: 30_000 })
+  const queue = createDoubaoQueue(ws, decodeDoubaoMessage)
 
   try {
     await waitForWsOpen(ws)
@@ -890,7 +833,7 @@ async function synthesizeOneDoubaoCue(cue, args, tempDir, WsConstructor) {
     ws.close?.()
     return audioPath
   } finally {
-    if (ws.readyState === 1) ws.close?.()
+    if (ws.readyState !== 3) ws.terminate()
   }
 }
 
